@@ -46,7 +46,7 @@ from bdbd.core.queries.summary import summary as summary_query
 from bdbd.core.scenario import build_effective_model, resolve_placeholders
 from bdbd.tui.scenario import Change, Scenario
 from bdbd.ui.theme import cents_of, money, pct
-from bdbd.words import describe, fmt_date, fmt_month
+from bdbd.words import describe, fmt_date, fmt_month, join
 
 T = TypeVar("T")
 
@@ -120,6 +120,7 @@ class FlowDraft:
     notes: str | None = None
     active: bool = True
     debt: DebtTerms | None = None
+    payday: bool = False  # an income that starts a pay cycle on each of its dates
 
     @classmethod
     def of(cls, flow: Flow) -> FlowDraft:
@@ -136,6 +137,7 @@ class FlowDraft:
             notes=flow.notes,
             active=flow.active,
             debt=DebtTerms.of(flow.debt) if flow.debt else None,
+            payday=flow.payday,
         )
 
 
@@ -379,6 +381,14 @@ class Session:
         """Scheduled items until the next income (at least ten days ahead)."""
         return ask.coming_up(self.overview(baseline=baseline), self.today)
 
+    def pay_cycles(self, *, baseline: bool = False) -> ask.PayCycles:
+        """Every pay cycle from the one under way through a year ahead (`bdbd paydays`)."""
+        model = self.model(baseline=baseline)
+        return self.cached(
+            ("pay_cycles", self._lensed(baseline)),
+            lambda: ask.pay_cycles(self.budget, model=model),
+        )
+
     def listing(self) -> ask.Listing:
         """Every stored flow (paused too) with its next date and monthly cost; never what-if."""
         return self.cached(("listing",), lambda: ask.listing(self.budget, include_inactive=True))
@@ -425,11 +435,6 @@ class Session:
             return data
 
         return self.cached(("summary", include_inactive), compute)
-
-    def yearly(self, flow: Flow) -> int:
-        """A flow's steady money a year, paused ones too (`bdbd summary --all`'s annual)."""
-        rows = self.summary(include_inactive=True)["by_flow"]
-        return next((cents_of(r["annual"]) for r in rows if r["flow"] == flow.id), 0)
 
     def calendar(self, month: date) -> tuple[list[ask.Day], Start]:
         """Every day of a month with its items, and projected balances from today on."""
@@ -502,6 +507,7 @@ class Session:
                 notes=draft.notes,
                 active=draft.active,
                 weekend=draft.weekend,
+                payday=draft.payday and draft.kind == Kind.INCOME,
             )
             if draft.debt is not None:
                 self._set_debt(int(f.id), draft.debt)
@@ -582,6 +588,17 @@ class Session:
             flow = repo.update_flow(self.conn, int(now.id), active=active)
         verb = "Resumed" if active else "Paused"
         return Done(f"{verb} {flow.name} · {self._net(before)}", flow)
+
+    def set_paydays(self, paydays: dict[int, bool]) -> Done:
+        """Which incomes start pay cycles (`bdbd edit NAME --payday` for each)."""
+        with self._write():
+            for flow_id, on in paydays.items():
+                if repo.get_flow(self.conn, flow_id).payday != on:
+                    repo.update_flow(self.conn, flow_id, payday=on)
+        names = [f.name for f in self.flows() if f.payday and f.kind == Kind.INCOME]
+        if not names:
+            return Done("No paydays now, so no pay cycles")
+        return Done(f"Paydays: {join(names)} · each one starts a pay cycle")
 
     def set_debt(self, flow_id: int, terms: DebtTerms) -> Done:
         """Attach or change an expense's loan details (mirrors `bdbd debt set`)."""

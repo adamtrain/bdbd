@@ -40,6 +40,7 @@ from bdbd.tui.views.calendar import CalendarView
 from bdbd.tui.views.debts import DebtsView
 from bdbd.tui.views.forecast import ForecastView
 from bdbd.tui.views.overview import OverviewView
+from bdbd.tui.views.paydays import PaydaysView
 from bdbd.tui.views.whatif import WhatIfView
 from bdbd.tui.widgets import Badge, View, bdbd, human_warning
 from bdbd.ui.common import humanize, tilde
@@ -100,6 +101,7 @@ THEME = Theme(
 
 VIEWS: list[tuple[str, type[View]]] = [
     ("overview", OverviewView),
+    ("paydays", PaydaysView),
     ("calendar", CalendarView),
     ("forecast", ForecastView),
     ("budget", BudgetView),
@@ -186,10 +188,10 @@ class Banner(Widget):
                 f"{human_warning(session.scenario_error)}",
                 style=AMBER,
             )
-            self._tail = Text(f"6 edit {DOT} w off", style=FAINT)
+            self._tail = Text(f"7 edit {DOT} w off", style=FAINT)
         elif s.unpinned and searching == "none":
             self._message = Text("No date in the next year works for the what-if", style=AMBER)
-            self._tail = Text(f"other views show your budget as it is {DOT} 6 edit", style=FAINT)
+            self._tail = Text(f"other views show your budget as it is {DOT} 7 edit", style=FAINT)
         elif s.unpinned and searching == "unpinned":
             self._message = Text("The what-if's date is unpinned")
             self._tail = Text(f"other views show your budget as it is {DOT} 6 pin", style=FAINT)
@@ -198,7 +200,7 @@ class Banner(Widget):
             self._tail = Text("other views show your budget as it is until then", style=FAINT)
         else:
             self._message = Text(f" {DOT} ".join(s.sentences(session.today, short=True)))
-            self._tail = Text(f"nothing is saved {DOT} w off {DOT} 6 edit", style=FAINT)
+            self._tail = Text(f"nothing is saved {DOT} w off {DOT} 7 edit", style=FAINT)
         self.refresh()
 
     def render(self) -> Text:
@@ -227,12 +229,13 @@ class MainScreen(Screen):
     BINDINGS: ClassVar = [
         Binding("b", "app.record_balance", "balance"),
         Binding("a", "add", "add"),
-        Binding("1", "app.show_view('overview')", "views", key_display="1-6"),
-        Binding("2", "app.show_view('calendar')", "Calendar", show=False),
-        Binding("3", "app.show_view('forecast')", "Forecast", show=False),
-        Binding("4", "app.show_view('budget')", "Budget", show=False),
-        Binding("5", "app.show_view('debts')", "Debts", show=False),
-        Binding("6", "app.show_view('whatif')", "What if", show=False),
+        Binding("1", "app.show_view('overview')", "views", key_display="1-7"),
+        Binding("2", "app.show_view('paydays')", "Paydays", show=False),
+        Binding("3", "app.show_view('calendar')", "Calendar", show=False),
+        Binding("4", "app.show_view('forecast')", "Forecast", show=False),
+        Binding("5", "app.show_view('budget')", "Budget", show=False),
+        Binding("6", "app.show_view('debts')", "Debts", show=False),
+        Binding("7", "app.show_view('whatif')", "What if", show=False),
         Binding("w", "app.what_if", "what-if"),
         Binding("question_mark", "app.help", "help"),
         Binding("colon", "app.command_palette", "commands", show=False),
@@ -430,6 +433,11 @@ class Commands(Provider):
             ("Add an expense", app.add_flow, "a bill, a subscription…"),
             ("Add a debt", partial(app.add_flow, loan=True), "a loan or a card"),
             ("Add a what-if", app.add_what_if, "try something without saving it"),
+            (
+                "Choose your paydays…",
+                partial(modals.open_paydays, app),
+                "incomes that start a cycle",
+            ),
             ("Settings…", app.open_settings, "everyday spending, the file, backups · press ,"),
             ("Everyday spending…", app.open_settings, "in settings · press ,"),
             ("Export a backup…", app.export_backup, "the whole budget as JSON"),
@@ -530,7 +538,7 @@ class BdbdApp(App[None]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Behind the too-small notice only quitting and help work (the main screen's own
-        check doesn't see its `app.` keys, like 1-6 and b)."""
+        check doesn't see its `app.` keys, like 1-7 and b)."""
         main = self.main
         if main is not None and self.screen is main and main.has_class("-too-small"):
             return action in ("ask_quit", "help", "quit")

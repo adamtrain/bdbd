@@ -538,7 +538,8 @@ async def test_the_card_shows_what_bdbd_show_says(make_app, budget_file, capsys)
     for day in ("Mon Oct 5", "Thu Nov 5", "Mon Dec 7", "Tue Jan 5", "Fri Feb 5", "Fri Mar 5"):
         assert day in text  # shown["upcoming"], after the weekend moves
     assert [date.fromisoformat(d).day for d in shown["upcoming"]] == [5, 5, 7, 5, 5, 5]
-    assert f"Per year {MINUS}$4,948.44" in text  # 12 x shown["monthly"] 412.37
+    assert shown["next_12_months"] == "4948.44"  # twelve payments of 412.37 before payoff
+    assert f"Next 12 months {MINUS}$4,948.44" in text
     outlook = shown["debt_outlook"]
     assert outlook["balance_at_as_of"] == "14907.56" and "$14,907.56" in text
     assert "simple interest, accrued daily never compounds" in text
@@ -566,12 +567,13 @@ async def test_one_card_serves_the_budget_panel_and_the_flow_card(make_app) -> N
         card.show(flow_lines(s, s.flow(_id(app, "Car registration"))))
         await pilot.pause()
         text = " ".join(widget_text(card).split())
-        # `bdbd summary` says monthly 18.33; a yearly flow's year is its amount, said once
-        assert f"Per month {MINUS}$18.33" in text and "Per year" not in text
+        # `bdbd summary` says monthly 18.33; its next 12 months are its amount, said once
+        assert f"Per month {MINUS}$18.33" in text and "Next 12 months" not in text
         card.show(flow_lines(s, s.flow(_id(app, "Paycheck"))))
         await pilot.pause()
         text = " ".join(widget_text(card).split())
-        assert "Per month +$5,760.07" in text and "Per year +$69,120.83" in text
+        # a steady month, and the 26 paydays that really fall in the next 12 months
+        assert "Per month +$5,760.07" in text and "Next 12 months +$68,900.00" in text
 
 
 async def test_card_keys_pause_edit_and_delete(make_app, budget_file) -> None:

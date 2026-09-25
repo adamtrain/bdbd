@@ -26,6 +26,10 @@ MainScreen {
     margin-right: 1;
 }
 
+MainScreen.-compact #brand {
+    display: none;  /* the seven tabs need the room */
+}
+
 #tabs {
     width: 1fr;
     height: 1;

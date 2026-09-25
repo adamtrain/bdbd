@@ -1,4 +1,4 @@
-"""The Debts view (5): what's owed, and when it's gone.
+"""The Debts view (6): what's owed, and when it's gone.
 
 The headline and the list are `bdbd debts`: owed today, a month in payments, the interest to
 go and the debt-free month, then every debt soonest-paid-off first. The selected debt shows
@@ -193,7 +193,7 @@ class DebtsView(View):
         paused = [f.name for f in self.session.flows() if f.debt is not None and not f.active]
         body = (
             "A loan or a card is an expense with what's owed, the rate and how interest works. "
-            "Add one, or give an expense its loan terms in Budget (4) with d."
+            "Add one, or give an expense its loan terms in Budget (5) with d."
         )
         if paused:
             names = ", ".join(paused)
@@ -541,9 +541,11 @@ def facts(
     narrow: bool,
     growth: int | None = None,
 ) -> list[list[str | Text]]:
-    """The selected debt's numbers: owed today, the payment, the payoff, what's left to pay.
+    """The selected debt's numbers: owed today, the payment, the payoff, the interest.
 
-    Interest to go is the app's one measure (from today), so owed + interest = in all.
+    Interest to go is the app's one measure (from today); "in all" is the interest over the
+    whole schedule as it stands (every payment below, recorded events included), which also
+    counts what's built up since the last payment.
     """
     assert flow.debt is not None
     d = flow.debt
@@ -578,9 +580,8 @@ def facts(
         note = plural(left, "payment") + " to go"
     rows.append(["Paid off", Text(fmt_date(day, today), style=f"bold {GREEN}"), Text(note, FAINT)])
     interest = Text(money(row.interest), style=f"bold {PURPLE}")
-    rows.append(
-        ["Interest", interest, Text(f"to go, of {money(owed + row.interest)} in all", FAINT)]
-    )
+    whole = max(cents_of(out["total_interest_remaining"]), row.interest)
+    rows.append(["Interest", interest, Text(f"to go, of {money(whole)} in all", FAINT)])
     return rows
 
 

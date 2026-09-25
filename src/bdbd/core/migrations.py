@@ -91,5 +91,20 @@ DDL_V4 = """
 CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
-MIGRATIONS: list[tuple[int, str]] = [(1, DDL_V1), (2, DDL_V2), (3, DDL_V3), (4, DDL_V4)]
+# An income flagged payday starts a pay cycle on each of its dates. A budget with exactly one
+# regular income (one that comes at least monthly) has its paycheck, so that one is flagged.
+DDL_V5 = """
+ALTER TABLE flow ADD COLUMN payday INTEGER NOT NULL DEFAULT 0 CHECK (payday IN (0,1));
+UPDATE flow SET payday = 1
+WHERE kind = 'income' AND active = 1 AND (rrule LIKE 'FREQ=DAILY%' OR rrule LIKE 'FREQ=WEEKLY%' OR (rrule LIKE 'FREQ=MONTHLY%' AND (rrule NOT LIKE '%INTERVAL=%' OR rrule LIKE '%INTERVAL=1;%' OR rrule LIKE '%INTERVAL=1')))
+  AND (SELECT count(*) FROM flow WHERE kind = 'income' AND active = 1 AND (rrule LIKE 'FREQ=DAILY%' OR rrule LIKE 'FREQ=WEEKLY%' OR (rrule LIKE 'FREQ=MONTHLY%' AND (rrule NOT LIKE '%INTERVAL=%' OR rrule LIKE '%INTERVAL=1;%' OR rrule LIKE '%INTERVAL=1')))) = 1;
+"""
+
+MIGRATIONS: list[tuple[int, str]] = [
+    (1, DDL_V1),
+    (2, DDL_V2),
+    (3, DDL_V3),
+    (4, DDL_V4),
+    (5, DDL_V5),
+]
 LATEST_VERSION = MIGRATIONS[-1][0]

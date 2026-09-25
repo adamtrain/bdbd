@@ -48,7 +48,7 @@ def project(path: Path, until: date, *flags: str) -> dict:
 
 async def open_forecast(app: BdbdApp, pilot) -> ForecastView:
     await pilot.pause()
-    await pilot.press("3")
+    await pilot.press("4")
     await pilot.pause()
     view = app.screen.query_one(ForecastView)
     assert isinstance(app.screen, MainScreen) and app.screen.switcher.current == "forecast"
@@ -116,7 +116,7 @@ async def test_the_headline_is_what_bdbd_project_says(make_app, budget_file) -> 
         text = headline(view)
         assert_headline_matches(text, data)
         assert "Thu Sep 24 → Thu Dec 24" in text and "3 months" in text
-        nxt = data["spare"]["next_income"]
+        nxt = data["spare"]["next_payday"]
         assert f"until {nxt['name']} on Fri Dec 25" in text  # what the spare counts to
         assert "Thu Oct 1" in text  # the lowest day
         await pilot.press("right_square_bracket", "right_square_bracket", "right_square_bracket")

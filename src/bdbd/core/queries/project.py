@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from bdbd.core import engine
 from bdbd.core.dates import is_month_end, month_end
-from bdbd.core.models import EffectiveModel
+from bdbd.core.models import EffectiveModel, Kind
 from bdbd.core.money import cents_to_str, dec_to_str
 
 
@@ -70,8 +70,13 @@ SPARE_LOOKAHEAD_DAYS = 400
 
 
 class SpareCalculator:
-    """Spare balance on a date = balance that day minus every expense that lands after it and
-    before the next income. Uses one extended simulation so any date in the window can be asked."""
+    """What's spare on a date: the balance that day plus everything that comes and goes after
+    it until the next payday (bills, everyday spending, and any other money coming in, each on
+    its day), so what's left the day before that payday.
+
+    A payday is an income flagged as one (it starts a pay cycle); a budget with none counts to
+    its next income of any kind. One extended simulation answers any date in the window.
+    """
 
     def __init__(
         self, model: EffectiveModel, as_of: date, until: date, weekly_spend_cents: int = 0
@@ -84,31 +89,42 @@ class SpareCalculator:
         )
         self.ledger = ext.ledger
         self.horizon = ext.until
+        self._paying = {f.key for f in model.flows if f.payday and f.kind == Kind.INCOME}
 
-    def _committed(self, day: date):
-        nxt = next((e for e in self.ledger if e.date > day and e.delta_cents > 0), None)
+    def _is_payday(self, e: engine.LedgerEntry) -> bool:
+        return e.delta_cents > 0 and (not self._paying or e.key in self._paying)
+
+    def _window(self, day: date) -> tuple[engine.LedgerEntry | None, list[engine.LedgerEntry]]:
+        """The next payday after `day` (None: none in the horizon), and everything before it."""
+        nxt = next((e for e in self.ledger if e.date > day and self._is_payday(e)), None)
         cutoff = nxt.date if nxt else None
-        committed = [
-            e
-            for e in self.ledger
-            if e.date > day and e.delta_cents < 0 and (cutoff is None or e.date < cutoff)
-        ]
-        return nxt, committed
+        between = [e for e in self.ledger if e.date > day and (cutoff is None or e.date < cutoff)]
+        return nxt, between
 
     def spare_cents(self, day: date, balance_cents: int) -> int:
-        """Spare balance in cents (no income ahead: every later expense in the horizon counts)."""
-        _, committed = self._committed(day)
-        return balance_cents - sum(-e.delta_cents for e in committed)
+        """Spare balance in cents (no payday ahead: everything left in the horizon counts)."""
+        _, between = self._window(day)
+        return balance_cents + sum(e.delta_cents for e in between)
 
     def compute(self, day: date, balance_cents: int) -> dict:
-        nxt, committed = self._committed(day)
-        total = sum(-e.delta_cents for e in committed)
-        lifestyle = sum(-e.delta_cents for e in committed if e.kind == "lifestyle")
-        committed = [e for e in committed if e.kind != "lifestyle"]
-        out = {
+        nxt, between = self._window(day)
+        out = [e for e in between if e.delta_cents < 0]
+        money_in = [e for e in between if e.delta_cents > 0]
+        committed = sum(-e.delta_cents for e in out)
+        lifestyle = sum(-e.delta_cents for e in out if e.kind == "lifestyle")
+        income = sum(e.delta_cents for e in money_in)
+
+        def item(e: engine.LedgerEntry) -> dict:
+            return {
+                "date": e.date.isoformat(),
+                "name": e.name,
+                "amount": cents_to_str(abs(e.delta_cents)),
+            }
+
+        return {
             "date": day.isoformat(),
             "balance": cents_to_str(balance_cents),
-            "next_income": (
+            "next_payday": (
                 {
                     "date": nxt.date.isoformat(),
                     "name": nxt.name,
@@ -117,15 +133,13 @@ class SpareCalculator:
                 if nxt
                 else None
             ),
-            "committed_total": cents_to_str(total),
+            "committed_total": cents_to_str(committed),
             "committed_lifestyle": cents_to_str(lifestyle),
-            "committed_before_next_income": [
-                {"date": e.date.isoformat(), "name": e.name, "amount": cents_to_str(-e.delta_cents)}
-                for e in committed
-            ],
-            "spare_balance": cents_to_str(balance_cents - total) if nxt else None,
+            "committed_before_payday": [item(e) for e in out if e.kind != "lifestyle"],
+            "income_before_payday": [item(e) for e in money_in],
+            "income_total": cents_to_str(income),
+            "spare_balance": cents_to_str(balance_cents + income - committed) if nxt else None,
         }
-        return out
 
 
 def project(
@@ -160,9 +174,9 @@ def project(
             d = date.fromisoformat(row["date"])
             row["spare"] = calc.compute(d, bal[d])["spare_balance"]
         spare = calc.compute(until, result.ending_balance_cents)
-        if spare["next_income"] is None:
+        if spare["next_payday"] is None:
             warnings.append(
-                f"no income found within {SPARE_LOOKAHEAD_DAYS} days after {until}; "
+                f"no payday found within {SPARE_LOOKAHEAD_DAYS} days after {until}; "
                 "spare_balance is null"
             )
     data = {

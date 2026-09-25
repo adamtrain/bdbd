@@ -15,7 +15,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from bdbd.ask import DebtRow, Picture, TagRow, coming_up
+from bdbd.ask import CycleItem, DebtRow, PayCycles, Picture, TagRow, coming_up
 from bdbd.budget import Recorded, Start
 from bdbd.core import balance as balances
 from bdbd.core.engine import LedgerEntry
@@ -178,8 +178,45 @@ def flow_json(f: Flow, *, next_date: date | None = None) -> dict:
         "active": f.active,
         "tags": list(f.tags),
         "weekend": str(f.weekend),
+        "payday": f.payday,
         "notes": f.notes,
         "debt": debt_json(f),
+    }
+
+
+def pay_cycles_json(pc: PayCycles, today: date) -> dict:
+    """`bdbd paydays`: each pay cycle, what its paycheck covers and what's left of it."""
+
+    def item(i: CycleItem) -> dict:
+        return {
+            "date": i.date.isoformat(),
+            "name": i.name,
+            "kind": i.kind,
+            "amount": cents_to_str(i.cents),
+        }
+
+    return {
+        "today": today.isoformat(),
+        "weekly_spend": cents_to_str(pc.weekly),
+        "paydays": pc.paydays,
+        "cycles": [
+            {
+                "start": c.start.isoformat(),
+                "end": c.end.isoformat(),
+                "days": c.days,
+                "current": c.holds(today),
+                "open": c.open,
+                "paycheck": cents_to_str(c.paycheck),
+                "paychecks": [item(i) for i in c.paychecks],
+                "bills": [item(i) for i in c.bills],
+                "bills_total": cents_to_str(c.bills_total),
+                "everyday": cents_to_str(c.everyday),
+                "left_before_everyday": cents_to_str(c.left_before_everyday),
+                "left": cents_to_str(c.left),
+                "money_in": [item(i) for i in c.money_in],
+            }
+            for c in pc.cycles
+        ],
     }
 
 

@@ -39,7 +39,7 @@ async def test_number_keys_and_clicks_switch_views(make_app) -> None:
         await pilot.pause()
         main = _main(app)
         assert main.switcher.current == "overview"
-        await pilot.press("3")
+        await pilot.press("4")
         assert main.switcher.current == "forecast"
         assert main.query_one("#tab-forecast").has_class("-active")
         assert not main.query_one("#tab-overview").has_class("-active")

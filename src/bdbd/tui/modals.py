@@ -47,7 +47,7 @@ from bdbd.ui.theme import (
     money,
     plural,
 )
-from bdbd.words import fmt_date, join, relative
+from bdbd.words import describe, fmt_date, join, relative
 
 if TYPE_CHECKING:
     from bdbd.tui.app import BdbdApp
@@ -255,7 +255,7 @@ class BalanceScreen(FormScreen[None]):
 # ── Help ──────────────────────────────────────────────────────────────────────
 
 GLOBAL_KEYS = [
-    ("1-6", "switch views"),
+    ("1-7", "switch views"),
     ("b", "record your balance"),
     ("a", "add to this view"),
     ("w", "the what-if on or off"),
@@ -275,11 +275,14 @@ LIST_KEYS = [
 READING = [
     ("Balance", "Cash on hand before today's scheduled items. Press b to record it; everything "
      "starts from the latest one, carried forward day by day."),
-    ("Spare", "The balance minus everything due before the next income, everyday spending "
-     "included. It's the money you can actually use."),
+    ("Spare", "The balance plus everything coming and going before your next payday: bills "
+     "and everyday spending out, any other money in on its day. What you'll have left the "
+     "day before it."),
     ("Everyday spending", "Groceries and incidentals, charged a little each day in every "
      "projection. Change it in settings (,)."),
     ("Lowest", "The lowest end-of-day balance ahead: the day to watch."),
+    ("Pay cycle", "From a payday to the day before the next one. What's free to spend or save "
+     "is the paycheck less the cycle's bills and everyday spending."),
     ("◆", "A debt payment. Its interest and principal split comes from the loan's own terms."),
     ("→Mon", "This flow's weekend dates move to Monday, the way an ACH pull does (→Fri: to "
      "Friday)."),
@@ -548,6 +551,57 @@ def open_flow_card(app: BdbdApp, flow_id: int) -> None:
         app.notify(sentence(exc.message), severity="error", markup=False)
         return
     app.push_screen(FlowCard(flow_id))
+
+
+# ── Paydays ───────────────────────────────────────────────────────────────────
+
+
+class PaydaysForm(FormScreen[None]):
+    """p in Paydays: which incomes start a pay cycle (`bdbd edit NAME --payday`)."""
+
+    TITLE = "Paydays"
+
+    def intro(self) -> ComposeResult:
+        yield FormNote(
+            "Each date of a payday starts a pay cycle, which runs to the day before the next "
+            "one. Your paycheck is one; a refund or a gift isn't (its money still counts in the "
+            "cycle it lands in)."
+        )
+
+    def fields(self) -> ComposeResult:
+        for f in self._incomes():
+            when = describe(f.rrule, f.dtstart, f.until) + ("" if f.active else " (paused)")
+            yield SwitchField(
+                f"payday-{f.id}",
+                f.name,
+                f.payday,
+                notes={
+                    True: f"{when} {DOT} starts a pay cycle",
+                    False: f"{when} {DOT} doesn't start one",
+                },
+            )
+
+    def _incomes(self) -> list[Flow]:
+        return [f for f in self.session.flows() if f.kind == Kind.INCOME]
+
+    def summary(self) -> str | Text | None:
+        on = [f.name for f in self._incomes() if self.value(f"payday-{f.id}")]
+        if not on:
+            return Text("No paydays: there won't be any pay cycles", style=AMBER)
+        return f"Pay cycles start on each date of {join(on)}"
+
+    def save(self, values: dict[str, Any]) -> None:
+        flags = {int(k.removeprefix("payday-")): bool(v) for k, v in values.items()}
+        bdbd(self).apply(lambda: self.session.set_paydays(flags))
+        self.dismiss(None)
+
+
+def open_paydays(app: BdbdApp) -> None:
+    """Choose the incomes that start pay cycles (a toast when there's no income yet)."""
+    if not any(f.kind == Kind.INCOME for f in app.session.flows()):
+        app.notify("Add your paycheck first: a gives you a new income.", markup=False)
+        return
+    app.push_screen(PaydaysForm())
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────

@@ -72,7 +72,7 @@ async def open_whatif(app: BdbdApp, pilot, *changes: Change) -> WhatIfView:
     await pilot.pause()
     for c in changes:
         app.session.add_change(c)
-    await pilot.press("6")
+    await pilot.press("7")
     await pilot.pause()
     assert isinstance(app.screen, MainScreen) and app.screen.switcher.current == "whatif"
     return app.screen.query_one(WhatIfView)

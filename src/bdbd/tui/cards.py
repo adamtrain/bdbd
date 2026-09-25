@@ -149,11 +149,11 @@ def flow_lines(s: Session, flow: Flow, *, dates: int = 3) -> list[CardLine]:
     sign = 1 if flow.kind == Kind.INCOME else -1
     lines: list[CardLine] = [status(flow), None]
     lines.append(Pair("Amount", flow_money(sign * flow.amount_cents, flow)))
-    if info.monthly:  # each only when it isn't the amount itself (a monthly or yearly flow)
-        if info.monthly != flow.amount_cents:
-            lines.append(Pair("Per month", flow_money(sign * info.monthly, flow)))
-        if (yearly := s.yearly(flow)) != flow.amount_cents:
-            lines.append(Pair("Per year", flow_money(sign * yearly, flow)))
+    # each only when it says something the amount doesn't (a monthly flow's month is its amount)
+    if info.monthly and info.monthly != flow.amount_cents:
+        lines.append(Pair("Per month", flow_money(sign * info.monthly, flow)))
+    if abs(info.next_year) not in (0, flow.amount_cents):  # its real dates: an end date counts
+        lines.append(Pair("Next 12 months", flow_money(info.next_year, flow)))
     lines.append(None)
     when = Text(describe(flow.rrule, flow.dtstart, flow.until))
     if flow.weekend == Weekend.NEXT:
@@ -193,6 +193,9 @@ def status(flow: Flow) -> Text:
     """'Money in', 'Money out · a debt ◆', 'Money out · paused' (and what pausing means)."""
     if flow.kind == Kind.INCOME:
         text = Text("Money in", style=GREEN)
+        if flow.payday:
+            text.append(f" {DOT} payday", style=FAINT)
+            text.append("\neach date starts a pay cycle", style=FAINT)
     else:
         text = Text("Money out", style=FOREGROUND)
     if flow.debt is not None:

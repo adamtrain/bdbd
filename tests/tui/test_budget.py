@@ -1,4 +1,4 @@
-"""The Budget view (4): Flows and Tags, driven the way a person would.
+"""The Budget view (5): Flows and Tags, driven the way a person would.
 
 Every number is checked against the JSON command that answers the same question
 (`bdbd ls --all`, `bdbd summary`, `bdbd overview`, `bdbd tags`, `bdbd spend`, `bdbd show`).
@@ -70,7 +70,7 @@ def stored_tags(path: Path) -> set[str]:
 
 async def open_budget(app: BdbdApp, pilot: Any) -> BudgetView:
     await pilot.pause()
-    await pilot.press("4")
+    await pilot.press("5")
     await pilot.pause()
     return app.screen.query_one(BudgetView)
 
@@ -157,8 +157,6 @@ async def test_the_headline_is_bdbd_overviews_month(make_app, budget_file, capsy
 
 async def test_the_card_follows_the_cursor(make_app, budget_file, capsys) -> None:
     show = run_json(budget_file, capsys, "show", "Car loan")
-    by_flow = run_json(budget_file, capsys, "summary", "--all")["by_flow"]
-    annual = next(r["annual"] for r in by_flow if r["name"] == "Car loan")
     debts = run_json(budget_file, capsys, "debts")["debts"]
     interest = next(cents(d["interest_remaining"]) for d in debts if d["name"] == "Car loan")
     app = make_app()
@@ -171,7 +169,8 @@ async def test_the_card_follows_the_cursor(make_app, budget_file, capsys) -> Non
         assert "Car loan ◆" in card and "Money out · a debt ◆" in card
         assert cents(show["monthly"]) == 41237  # a monthly flow: its month is its amount,
         assert "Per month" not in card and money(-41237) in card  # said once
-        assert money(-cents(annual)) in card  # `bdbd summary --all`'s annual, not 12 x monthly
+        assert "Next 12 months" in card  # on its real dates, as `bdbd show` says
+        assert money(-cents(show["next_12_months"])) in card
         owed = cents(outlook["balance_at_as_of"])
         assert money(owed) in card  # owed today
         assert fmt_month(date.fromisoformat(outlook["payoff_date"])) in card
@@ -349,7 +348,6 @@ async def test_tags_match_bdbd_tags_and_bdbd_spend(make_app, budget_file, capsys
         for m in (1, 3, 12)
     }
     earns = run_json(budget_file, capsys, "spend", "job", "--income", "--months", "3")["total"]
-    by_tag = {r["tag"]: r for r in run_json(budget_file, capsys, "summary")["by_tag"]}
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         view = await open_budget(app, pilot)
@@ -370,7 +368,7 @@ async def test_tags_match_bdbd_tags_and_bdbd_spend(make_app, budget_file, capsys
         await select(view, pilot, "car")
         card = widget_text(view.query_one("#tag-side"))
         assert money(-cents(tags["car"]["expense_monthly"])) in card  # per month
-        assert money(-cents(by_tag["car"]["expense_annual"])) in card  # per year
+        assert "Per year" not in card  # the next 12 months say it, end dates and all
         for m, label in ((1, "Next month"), (3, "Next 3 months"), (12, "Next 12 months")):
             line = next(li for li in card.splitlines() if label in li)
             assert line.strip("│ ").endswith(money(-cents(spend[m])))

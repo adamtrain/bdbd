@@ -14,15 +14,18 @@
 </p>
 
 <p align="center">
-  <img src="docs/overview.svg" width="860" alt="The bdbd app on its Overview. Tabs across the top for Overview, Calendar, Forecast, Budget, Debts and What if. A 'Where you stand' panel shows a balance of $4,070.00 estimated from $4,120.00 recorded on Sep 22, $1,595.00 spare until the $2,650.00 paycheck on Fri Oct 2, and the lowest balance ahead, $1,595.00 on Thu Oct 1, with +$5,760.07 a month coming in against $3,378.09 of bills and $760.94 of everyday spending. Below it, a column chart of the balance over the next 90 days stepping up at each payday, then what's coming up with the balance after each item, and three debts with their balances, rates, progress bars and payoff dates.">
+  <img src="docs/overview.svg" width="860" alt="The bdbd app on its Overview. Tabs across the top for Overview, Paydays, Calendar, Forecast, Budget, Debts and What if. A 'Where you stand' panel shows a balance of $4,070.00 estimated from $4,120.00 recorded on Sep 22, $1,595.00 spare until the $2,650.00 paycheck on Fri Oct 2, and the lowest balance ahead, $1,595.00 on Thu Oct 1, with +$5,760.07 a month coming in against $3,378.09 of bills and $760.94 of everyday spending. Below it, a column chart of the balance over the next 90 days stepping up at each payday, then what's coming up with the balance after each item, and three debts with their balances, rates, progress bars and payoff dates.">
 </p>
 
 ## Why bdbd
 
 - **Where you stand, at a glance.** Run `bdbd` and see your balance, the money that's spare until
   payday, the lowest your balance will get, what's coming up and when each debt is gone.
-- **Six views, a keypress apart.** Overview, Calendar, Forecast, Budget, Debts and What if sit on
-  `1` to `6`. Enter on anything opens it, and `?` lists the keys that work where you are.
+- **What each paycheck leaves you.** On payday, Paydays says what's free to spend or save once
+  the bills due before the next paycheck (and your everyday spending) are covered.
+- **Seven views, a keypress apart.** Overview, Paydays, Calendar, Forecast, Budget, Debts and
+  What if sit on `1` to `7`. Enter on anything opens it, and `?` lists the keys that work where
+  you are.
 - **Say it the way you'd say it.** Type "every 2 weeks on fri" or "yearly on the 3rd tuesday of
   november" and the form shows the next few dates as you type. Dates can be `fri`, `oct 15`,
   `+3w` or `eom`.
@@ -67,7 +70,8 @@ uv tool install --editable .
 ## Getting started
 
 1. Press `a` to add your paycheck: its amount and when it comes ("every 2 weeks on fri"). The
-   first thing you add is money in; after that, `a` adds money out.
+   first thing you add is money in; after that, `a` adds money out. Your paycheck is your
+   payday: each one starts a pay cycle.
 2. Press `a` for each bill: rent, insurance, subscriptions. For a loan or a card, switch on
    **Loan or card** and give what's owed and the rate.
 3. Press `,` for settings and set your everyday spending: groceries and the like, spread over
@@ -82,7 +86,16 @@ The Overview then shows where that leaves you.
 
 ## The views
 
-**Calendar** (`2`) lays a month out day by day: what lands on each day (paychecks in green, debt
+**Paydays** (`2`) takes one pay cycle at a time, from a payday to the day before the next: the
+paycheck, the bills that land in the cycle, and what's free to spend or save once they and your
+everyday spending are paid. `v` leaves everyday spending out, and `p` picks which incomes are
+paydays (your paycheck is; a refund isn't, though its money counts in the cycle it lands in).
+
+<p align="center">
+  <img src="docs/paydays.svg" width="860" alt="The Paydays view on the pay cycle from Fri Oct 2 to Thu Oct 15, in 8 days: $1,606.24 free to spend or save after bills and everyday spending, from the +$2,650.00 Paycheck, less −$693.76 of bills (5 bills, the Car loan the biggest) and −$350.00 of everyday spending for 14 days at $175/week, or $1,956.24 not counting everyday spending. Below, every pay cycle for the next 12 months with its bills and what's left, green where the paycheck covers them and red where it falls short, as in the cycles that pay the rent; beside it, the cycle's paycheck and bills with what's left of the paycheck after each.">
+</p>
+
+**Calendar** (`3`) lays a month out day by day: what lands on each day (paychecks in green, debt
 payments in purple) and the balance at the end of every day from today on. Beside it, the
 selected day in full, and the month's money in and out.
 
@@ -90,7 +103,7 @@ selected day in full, and the month's money in and out.
   <img src="docs/calendar.svg" width="860" alt="October 2026 as a Monday-first grid. Each day shows its net change and what lands on it, like Rent −2,150 on the 1st and Paycheck +2,650 on the 2nd, 16th and 30th, with the balance at the end of the day at the bottom of each cell. Thu Oct 1 is selected: at the end of the day $1,595.00, all of it spare before the Paycheck on Fri Oct 2. Below, October starts at $3,770.00, brings in +$9,190.00 against −$3,584.76 out and −$775.00 of everyday spending, ends at $8,600.24 and is lowest on Thu Oct 1 at $1,595.00.">
 </p>
 
-**Forecast** (`3`) runs your budget forward, from a month to five years or to any day you name:
+**Forecast** (`4`) runs your budget forward, from a month to five years or to any day you name:
 where you end up, what's spare then, the lowest point on the way, what the debts cost, and
 every transaction or a month-by-month table.
 
@@ -98,20 +111,20 @@ every transaction or a month-by-month table.
   <img src="docs/forecast.svg" width="860" alt="A one-year forecast from Thu Sep 24 to Fri Sep 24, 2027: it starts at $4,070.00, ends at $24,307.88 with $24,007.88 spare until the Paycheck on Fri Oct 1, 2027, and is lowest at $1,595.00 on Thu Oct 1. Money in is +$70,140.00 and money out −$49,902.12, with $2,302.02 of interest paid and $29,260.57 of debt left. A horizon picker offers 1m, 3m, 6m, 1y, 2y and 5y. Below, a column chart of the balance at the end of each day climbing over the year, and a list of transactions with the balance after each.">
 </p>
 
-**Budget** (`4`) is every flow with its schedule, its next date and what it costs a month, or
+**Budget** (`5`) is every flow with its schedule, its next date and what it costs a month, or
 the same money by tag. The card beside the list says everything about the one you're on, and
 `e`, `space` and `x` edit, pause and delete it.
 
 <p align="center">
-  <img src="docs/budget.svg" width="860" alt="Each month +$5,760.07 comes in and −$3,378.09 goes to bills and −$760.94 to everyday spending, leaving +$1,621.04. Below, the two incomes and thirteen expenses with their amounts, schedules, next dates and monthly cost; debts carry a purple diamond and flows whose weekend dates move to Monday say so. The Car loan is selected, and its card shows −$412.37 monthly on the 5th, −$4,948.44 a year, the next three dates, and its loan: $14,907.56 owed at 6.49% simple interest, paid off Feb 2030 after 41 more payments, $1,667.92 of interest to go and $16,575.48 in all.">
+  <img src="docs/budget.svg" width="860" alt="Each month +$5,760.07 comes in and −$3,378.09 goes to bills and −$760.94 to everyday spending, leaving +$1,621.04. Below, the two incomes and thirteen expenses with their amounts, schedules, next dates and monthly cost; debts carry a purple diamond and flows whose weekend dates move to Monday say so. The Car loan is selected, and its card shows −$412.37 monthly on the 5th, −$4,948.44 over the next 12 months, the next three dates, and its loan: $14,907.56 owed at 6.49% simple interest, paid off Feb 2030 after 41 more payments, $1,667.92 of interest to go and $16,575.48 in all.">
 </p>
 
-**Debts** (`5`) is what you owe and when it's gone: each debt's balance, rate and payoff date,
+**Debts** (`6`) is what you owe and when it's gone: each debt's balance, rate and payoff date,
 its terms and recorded events, and every payment to come. `r` records an extra payment, a new
 rate or a payoff.
 
 <p align="center">
-  <img src="docs/debts.svg" width="860" alt="What you owe across 3 debts: $36,538.89 today, $798.37 a month in payments, $6,441.09 of interest to go if you keep paying as scheduled, and debt-free in Aug 2034. The debts, soonest paid off first: the Credit card, $3,226.30 at 22.99%, paid off Dec 2028; the Car loan, $14,907.56 at 6.49%, Feb 2030; the Student loan, $18,405.03 at 4.99%, Aug 2034. The Credit card is selected: $150.00 monthly on the 25th, paid off Dec 25, 2028 after 28 payments, $888.07 of interest to go of $4,114.37 in all, with a chart of its balance falling to zero, and below, every payment to come with its interest, principal and balance.">
+  <img src="docs/debts.svg" width="860" alt="What you owe across 3 debts: $36,538.89 today, $798.37 a month in payments, $6,441.09 of interest to go if you keep paying as scheduled, and debt-free in Aug 2034. The debts, soonest paid off first: the Credit card, $3,226.30 at 22.99%, paid off Dec 2028; the Car loan, $14,907.56 at 6.49%, Feb 2030; the Student loan, $18,405.03 at 4.99%, Aug 2034. The Credit card is selected: $150.00 monthly on the 25th, paid off Dec 25, 2028 after 28 payments, with $888.07 of interest to go of $914.37 over its whole schedule, with a chart of its balance falling to zero, and below, every payment to come with its interest, principal and balance.">
 </p>
 
 `p` works out a payoff plan: an extra amount each month, one debt at a time, each freed payment
@@ -121,7 +134,7 @@ rolling into the next.
   <img src="docs/plan.svg" width="860" alt="The Payoff plan dialog over the Debts view. With $200 extra a month, highest rate first (Credit card, then Car loan, then Student loan), starting today: debt-free in Jan 2030, 4 years 7 months sooner than Aug 2034, paying $998.37 a month instead of $798.37 and saving $2,840.57 of interest, with the balance never lower than $1,395.00, so the plan fits the budget. A timeline shows each debt paid off well before a dotted line marking its scheduled end, above a table of the payoff order, and a button to try it in What if.">
 </p>
 
-**What if** (`6`) tries changes without saving them: sell something and clear its loan, add a
+**What if** (`7`) tries changes without saving them: sell something and clear its loan, add a
 one-off, stop a bill, change a payment or a rate. It compares the result with your budget as
 it is, or, when a date is `?`, finds the earliest one that keeps your balance above a floor.
 While it's on, every other view shows your budget with it, and `w` turns it off.
@@ -134,7 +147,7 @@ While it's on, every other view shows your budget with it, and `w` turns it off.
 
 | | |
 | --- | --- |
-| `1`–`6` | Overview, Calendar, Forecast, Budget, Debts, What if |
+| `1`–`7` | Overview, Paydays, Calendar, Forecast, Budget, Debts, What if |
 | `a` | Add: a flow, or whatever the view adds (a debt, a what-if change) |
 | `b` | Record your balance |
 | `enter` | Open what's selected: a flow's card, a day's items, a month |
@@ -152,9 +165,11 @@ and click a choice in a panel's border (like a forecast's `1y`) to pick it.
 | | |
 | --- | --- |
 | **Balance** | Cash on hand before today's scheduled items. `b` records it; everything starts from the latest one, carried forward day by day. |
-| **Spare** | The balance minus everything due before the next income, everyday spending included. It's the money you can actually use. |
+| **Spare** | Your balance plus everything that comes and goes before your next payday: bills and everyday spending out, any other money (a refund) in on its day. It's what you'll have left the day before your paycheck. |
 | **Everyday spending** | Groceries and incidentals, charged a little each day in every projection. Set it in settings (`,`). |
 | **Lowest** | The lowest end-of-day balance ahead: the day to watch. |
+| **Free to spend or save** | What's left of a paycheck once the bills in its pay cycle (payday to the day before the next) and its everyday spending are paid. |
+| **Next 12 months** | What a flow really brings in or costs over the coming year, on its dates, so an end date or a loan's payoff cuts it short. |
 | **Interest to go** | What a debt will still cost from today, so what's owed plus the interest to go is everything left to pay. |
 | **◆** | A debt payment. Its interest and principal split comes from the loan's own terms. |
 | **→Mon** | This flow's weekend dates move to Monday, the way an ACH pull does. |
@@ -168,15 +183,15 @@ Every command prints one JSON envelope on stdout. Nothing ever prompts, errors c
 JSON too, and `--select` keeps only the fields you ask for:
 
 ```sh
-$ bdbd project --until dec 12 --select spare_balance,spare.next_income,opening.source
-{"ok":true,"command":"project","data":{"spare_balance":"8480.72","spare.next_income":{"date":"2026-12-25","name":"Paycheck","amount":"2650.00"},"opening.source":"carried"},"warnings":[]}
+$ bdbd project --until dec 12 --select spare_balance,spare.next_payday,opening.source
+{"ok":true,"command":"project","data":{"spare_balance":"8480.72","spare.next_payday":{"date":"2026-12-25","name":"Paycheck","amount":"2650.00"},"opening.source":"carried"},"warnings":[]}
 ```
 
 `bdbd overview` is the Overview's numbers, and the other commands cover everything the app does:
-`add`, `edit`, `rm`, `pause`, `balance`, `debt …`, `upcoming`, `cal`, `project`, `compare`,
-`earliest`, `plan`, `export`, `import` and more. Every question takes the same what-if flags
-(`--settle "Car loan:13000@nov 1"`, `--add-expense "Flight:650@?"`), and nothing they describe
-is saved. Money is a string with two decimals, dates are ISO, and `warnings` should always be
+`add`, `edit`, `rm`, `pause`, `balance`, `debt …`, `upcoming`, `paydays`, `cal`, `project`,
+`compare`, `earliest`, `plan`, `export`, `import` and more. Every question takes the same what-if
+flags (`--settle "Car loan:13000@nov 1"`, `--add-expense "Flight:650@?"`), and nothing they
+describe is saved. Money is a string with two decimals, dates are ISO, and `warnings` should always be
 passed on to the person. `bdbd guide` returns the full reference, with every command's fields
 and recipes for common questions, which is the one thing an agent should read first.
 

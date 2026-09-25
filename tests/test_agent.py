@@ -13,12 +13,7 @@ from decimal import Decimal
 from importlib import resources
 from pathlib import Path
 
-import pytest
-
 from bdbd import __version__, cli
-from bdbd.core import db
-
-from . import sample
 
 BASE = ["project", "--balance", "3000", "--as-of", "2026-09-16", "--months", "6"]
 
@@ -63,8 +58,8 @@ def test_spare_balance_on_payday(reference):
     d = reference("project", "--balance", "3000", "--until", "2026-11-13")["data"]
     assert d["ending_balance"] == "8993.34"
     payday = {"date": "2026-11-27", "name": "Salary", "amount": "2500.00"}
-    assert d["spare"]["next_income"] == payday
-    assert d["spare"]["committed_before_next_income"] == [
+    assert d["spare"]["next_payday"] == payday
+    assert d["spare"]["committed_before_payday"] == [
         {"date": "2026-11-15", "name": "Car insurance", "amount": "120.00"}
     ]
     assert d["spare_balance"] == "8873.34"
@@ -322,7 +317,7 @@ def test_overview_is_the_old_bare_agent_call(reference):
     assert d["balance"]["balance"] == "3000.00" and d["balance"]["source"] == "recorded"
     assert d["spare_balance"] == "3000.00"
     salary = {"date": "2026-09-18", "name": "Salary", "amount": "2500.00"}
-    assert d["spare"]["next_income"] == salary
+    assert d["spare"]["next_payday"] == salary
     assert d["low_point"] == {"date": "2026-10-01", "balance": "2500.00", "horizon_days": 90}
     assert d["monthly"] == {"income": "5436.51", "bills": "3506.66", "everyday": "0.00",
                             "net": "1929.85"}  # fmt: skip
@@ -408,19 +403,10 @@ def test_help_says_bdbd_alone_opens_the_app(capsys):
 # ── The made-up household (tests/sample.py): the numbers the app shows ────────
 
 
-@pytest.fixture
-def home(agent, db_path, monkeypatch):
-    monkeypatch.setenv("BDBD_TODAY", sample.TODAY.isoformat())
-    conn = db.connect(db_path)
-    sample.build(conn)
-    conn.close()
-    return agent
-
-
 def test_household_overview(home):
     d = home("overview")["data"]
     assert d["balance"]["balance"] == "4070.00" and d["balance"]["source"] == "carried"
-    assert d["spare"]["next_income"] == {"date": "2026-10-02", "name": "Paycheck",
+    assert d["spare"]["next_payday"] == {"date": "2026-10-02", "name": "Paycheck",
                                          "amount": "2650.00"}  # fmt: skip
     assert d["spare_balance"] == "1595.00"
     assert d["low_point"] == {"date": "2026-10-01", "balance": "1595.00", "horizon_days": 90}
@@ -704,5 +690,39 @@ def test_items_carry_the_end_of_day_balance(home):
 def test_coming_up_on_a_payday_runs_to_the_next_one(home, monkeypatch):
     monkeypatch.setenv("BDBD_TODAY", "2026-10-02")
     d = home("overview")["data"]
-    assert d["spare"]["next_income"]["date"] == "2026-10-16"
+    assert d["spare"]["next_payday"]["date"] == "2026-10-16"
     assert "Car insurance" in [i["name"] for i in d["upcoming"]]
+
+
+# ── Ordering and the next 12 months ───────────────────────────────────────────
+
+
+def test_a_days_items_list_money_in_first_then_the_largest(reference):
+    reference("add", "Bonus", "500", "once on 2026-11-01", "--income")
+    items = reference("upcoming", "--balance", "3000", "--until", "2026-11-01")["data"]["items"]
+    day = [i for i in items if i["date"] == "2026-11-01"]
+    assert [i["name"] for i in day] == [
+        "Bonus",
+        "Rent",
+        "Car loan",
+    ]  # the loan paid first, listed after
+    after = [Decimal(i["balance_after"]) for i in day]
+    assert after[1] == after[0] - Decimal("3000.00")  # running balances follow the listing
+    assert after[2] == after[1] - Decimal("386.66")
+    assert day[-1]["end_of_day_balance"] == day[-1]["balance_after"]
+
+
+def test_a_flows_next_12_months_stop_at_its_end_date(home):
+    home("add", "Bay Ridge rent", "2000", "monthly on the 1st", "--until", "2027-08-31")
+    d = home("show", "Bay Ridge rent")["data"]
+    assert d["monthly"] == "2000.00"
+    assert d["next_12_months"] == "22000.00"  # Oct 1 to Aug 1: eleven months, not twelve
+    assert home("spend", "Bay Ridge rent", "--months", "12")["data"]["total"] == "22000.00"
+    loan = home("show", "Credit card")["data"]
+    assert loan["next_12_months"] == "1800.00"  # twelve payments of 150.00
+
+
+def test_spend_months_are_whole_months(home):
+    # a yearly bill due on the first day is in the next 12 months once, not twice
+    d = home("spend", "Car registration", "--months", "12", "--from", "2027-03-14")["data"]
+    assert d["total"] == "220.00"

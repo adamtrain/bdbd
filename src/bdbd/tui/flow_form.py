@@ -33,6 +33,7 @@ from textual.suggester import Suggester
 from textual.widgets import Static
 
 from bdbd import ask
+from bdbd.core import repo
 from bdbd.core.errors import CashError
 from bdbd.core.models import (
     Compounding,
@@ -246,6 +247,10 @@ class FlowForm(FormScreen[None]):
         self.flow = flow
         self.focus_loan = loan and flow is not None
         self._last: tuple[Any, Any] | None = None  # (money of a draft, (net, outlook))
+        # adding, Payday follows the schedule (the first regular income is the paycheck)
+        # until the person sets it; `_payday_preset` is what it was last set to that way
+        self._payday_preset = False
+        self._payday_by_hand = flow is not None
         f = flow
         debt = f.debt if f else None
         self.initial: dict[str, Any] = {
@@ -259,6 +264,7 @@ class FlowForm(FormScreen[None]):
             "tags": ", ".join(f.tags) if f else "",
             "notes": (f.notes or "") if f else "",
             "active": f.active if f else True,
+            "payday": f.payday if f else False,
             "loan": debt is not None or (loan and (f is None or f.kind == Kind.EXPENSE)),
             "balance": money(debt.balance_cents, symbol=False) if debt else "",
             "as_of": fmt_date(debt.balance_as_of) if debt else "today",
@@ -346,6 +352,15 @@ class FlowForm(FormScreen[None]):
                     False: "Saved, but left out of every projection",
                 },
             )
+        yield SwitchField(
+            "payday",
+            "Payday",
+            i["payday"],
+            notes={
+                True: "Each of its dates starts a pay cycle (see Paydays, 2)",
+                False: "Doesn't start a pay cycle: a refund, a gift, interest",
+            },
+        )
         yield SwitchField(
             "loan",
             "Loan or card",
@@ -618,9 +633,32 @@ class FlowForm(FormScreen[None]):
             self._retitle()
         if key in ("kind", "loan", "compounding", "payment_mode"):
             self._show_dependents()
+        if key == "payday" and field.value != self._payday_preset:
+            self._payday_by_hand = True
+        if key in ("kind", "when"):
+            self._preset_payday()
+
+    def _preset_payday(self) -> None:
+        """Adding an income that comes at least monthly, while the budget has no payday yet:
+        it's the paycheck, so Payday switches on (unless the person has set it)."""
+        if self._payday_by_hand:
+            return
+        when = self.field("when").parsed
+        rrule = when.value.rrule if when.ok and when.value is not None else None
+        preset = (
+            self._choice("kind") == Kind.INCOME
+            and repo.recurs_monthly_or_more(rrule)
+            and not any(f.payday for f in self.session.flows(include_inactive=False))
+        )
+        self._payday_preset = preset
+        switch = self.field("payday")
+        if switch.value != preset:
+            assert isinstance(switch, ChoiceField)
+            switch.select(preset)
 
     def _show_dependents(self) -> None:
         expense = self._choice("kind") == Kind.EXPENSE
+        self.field("payday").display = not expense
         self.field("loan").display = expense
         self.query_one("#loan", Vertical).display = expense and bool(self._choice("loan"))
         self.field("posting_day").display = self._choice("compounding") == Compounding.MONTHLY
@@ -676,6 +714,7 @@ class FlowForm(FormScreen[None]):
             notes=v["notes"],
             active=v.get("active", True),
             debt=self._terms(v) if kind == Kind.EXPENSE and v.get("loan") else None,
+            payday=kind == Kind.INCOME and bool(v.get("payday")),
         )
 
     def _terms(self, v: dict[str, Any]) -> DebtTerms:

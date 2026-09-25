@@ -129,6 +129,18 @@ def agent(db_path, capsys) -> Run:
 
 
 @pytest.fixture
+def home(agent, db_path, monkeypatch) -> Run:
+    """The made-up household (tests/sample.py), "today" Thu Sep 24, 2026."""
+    from . import sample
+
+    monkeypatch.setenv("BDBD_TODAY", sample.TODAY.isoformat())
+    conn = db.connect(db_path)
+    sample.build(conn)
+    conn.close()
+    return agent
+
+
+@pytest.fixture
 def reference(agent) -> Run:
     """The reference budget, entered through the CLI in plain English."""
     agent("add", "Salary", "2500", "--income", "--when", "every 2 weeks", "--from",

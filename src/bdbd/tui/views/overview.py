@@ -162,7 +162,7 @@ class OverviewView(View):
             rows.append(["Balance now", bold_balance(p.start.cents, low), self._start_note(p)])
             spare = _spare(p)
             if spare is not None:
-                nxt = (p.spare or {})["next_income"]
+                nxt = (p.spare or {})["next_payday"]
                 day = date.fromisoformat(nxt["date"])
                 when = fmt_date(day, today, weekday=not self.has_class("-narrow"))
                 note = Text.assemble(
@@ -174,7 +174,7 @@ class OverviewView(View):
                 rows.append(["Spare until payday", bold_balance(spare, low), note])
             else:
                 rows.append(
-                    ["Spare", Text("—", style=FAINT), Text("no income ahead to count to", FAINT)]
+                    ["Spare", Text("—", style=FAINT), Text("no payday ahead to count to", FAINT)]
                 )
             if lo := p.low_point:
                 note = Text(

@@ -171,6 +171,7 @@ def _row_to_flow(conn: sqlite3.Connection, r: sqlite3.Row) -> Flow:
         debt=_load_debt(conn, fid),
         created_at=r["created_at"],
         updated_at=r["updated_at"],
+        payday=bool(r["payday"]),
     )
 
 
@@ -229,6 +230,24 @@ def check_name(name: str) -> str:
     return n
 
 
+def recurs_monthly_or_more(rrule: str | None) -> bool:
+    """A schedule that comes at least once a month: daily, weekly (any interval), or every
+    month (on one day or several). The migration to v5 uses the same rule in SQL."""
+    if not rrule:
+        return False
+    parts = dict(p.split("=", 1) for p in rrule.upper().split(";") if "=" in p)
+    freq = parts.get("FREQ")
+    return freq in ("DAILY", "WEEKLY") or (freq == "MONTHLY" and parts.get("INTERVAL", "1") == "1")
+
+
+def payday_by_default(conn: sqlite3.Connection, kind: Kind, rrule: str | None) -> bool:
+    """A new income is a payday when it comes at least monthly and the budget has none yet:
+    the first paycheck you add starts the pay cycles."""
+    if kind != Kind.INCOME or not recurs_monthly_or_more(rrule):
+        return False
+    return conn.execute("SELECT 1 FROM flow WHERE payday = 1 AND active = 1").fetchone() is None
+
+
 def add_flow(
     conn: sqlite3.Connection,
     *,
@@ -243,7 +262,9 @@ def add_flow(
     active: bool = True,
     weekend: Weekend = Weekend.NONE,
     flow_id: int | None = None,
+    payday: bool | None = None,
 ) -> Flow:
+    """`payday` None: by `payday_by_default`; only an income can be one."""
     name = check_name(name)
     if rrule is not None:
         rrule = validate_rrule(rrule)
@@ -251,9 +272,13 @@ def add_flow(
         raise CashError("until must not be before dtstart", "invalid_date")
     if conn.execute("SELECT 1 FROM flow WHERE name = ?", (name,)).fetchone():
         raise CashError(f"a flow named {name!r} already exists", "duplicate_flow")
+    if payday is None:
+        payday = payday_by_default(conn, kind, rrule)
+    elif payday and kind != Kind.INCOME:
+        raise CashError("only an income can be a payday", "invalid_payday")
     cur = conn.execute(
         "INSERT INTO flow(id, name, kind, amount_cents, rrule, dtstart, until, active, notes, "
-        "weekend) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "weekend, payday) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             flow_id,
             name,
@@ -265,6 +290,7 @@ def add_flow(
             1 if active else 0,
             notes,
             str(Weekend(weekend)),
+            1 if payday else 0,
         ),
     )
     assert cur.lastrowid is not None
@@ -290,6 +316,7 @@ def update_flow(
     active: Any = _UNSET,
     notes: Any = _UNSET,
     weekend: Any = _UNSET,
+    payday: Any = _UNSET,
 ) -> Flow:
     current = get_flow(conn, flow_id)
     sets: list[str] = []
@@ -310,6 +337,8 @@ def update_flow(
             )
         sets.append("kind = ?")
         args.append(str(Kind(kind)))
+        if Kind(kind) != Kind.INCOME and payday is _UNSET:
+            payday = False  # only an income starts a pay cycle
     if amount_cents is not _UNSET:
         sets.append("amount_cents = ?")
         args.append(int(amount_cents))
@@ -335,6 +364,12 @@ def update_flow(
     if weekend is not _UNSET:
         sets.append("weekend = ?")
         args.append(str(Weekend(weekend)))
+    if payday is not _UNSET:
+        new_kind = current.kind if kind is _UNSET else Kind(kind)
+        if payday and new_kind != Kind.INCOME:
+            raise CashError("only an income can be a payday", "invalid_payday")
+        sets.append("payday = ?")
+        args.append(1 if payday else 0)
     if sets:
         args.append(flow_id)
         conn.execute(f"UPDATE flow SET {', '.join(sets)} WHERE id = ?", args)
@@ -544,6 +579,7 @@ def export_all(conn: sqlite3.Connection, schema_version: int) -> dict:
             "notes": f.notes,
             "tags": list(f.tags),
             "weekend": str(f.weekend),
+            "payday": f.payday,
             "debt": None,
         }
         if f.debt:
@@ -639,6 +675,7 @@ def import_rows(conn: sqlite3.Connection, payload: dict, *, keep_ids: bool) -> i
                 active=bool(item.get("active", True)),
                 weekend=Weekend(item.get("weekend", "none")),
                 flow_id=item.get("id") if keep_ids else None,
+                payday=item.get("payday"),  # older backups: the default rule
             )
             d = item.get("debt")
             if d:

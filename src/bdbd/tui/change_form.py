@@ -374,7 +374,7 @@ class ChangeForm(FormScreen[Change]):
         if not names:
             return Parsed.bad(
                 {
-                    "debt": "You don't track any debts; add one in Debts (5)",
+                    "debt": "You don't track any debts; add one in Debts (6)",
                     "paused": "Nothing in your budget is paused",
                 }.get(target or "", "Your budget has no flows yet")
             )

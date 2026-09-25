@@ -5,7 +5,7 @@ A test drives the real app with Textual's Pilot and reads the screen as plain te
     async def test_something(make_app):
         app = make_app()
         async with app.run_test(size=SIZE) as pilot:
-            await pilot.press("2")
+            await pilot.press("3")
             assert "Calendar" in screen_text(app)
 """
 

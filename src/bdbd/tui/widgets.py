@@ -1,6 +1,6 @@
 """Shared building blocks, so every view reads as part of one app.
 
-- `View`: the base class of the six views (the app calls `refresh_view()`).
+- `View`: the base class of the seven views (the app calls `refresh_view()`).
 - `Panel`: a rounded box with a title; its border lights up while something inside has focus.
 - `KeyValues`: the headline grid: FAINT label, bold value, then notes.
 - `Chart`: a balance chart that fills its box, with an optional marker day.
@@ -192,7 +192,7 @@ def warning_line(text: str) -> Text:
 
 
 class View(Widget):
-    """Base class of the six views (Overview, Calendar, Forecast, Budget, Debts, What if).
+    """Base class of the views (Overview, Paydays, Calendar, Forecast, Budget, Debts, What if).
 
     A view lives in the app's ContentSwitcher and draws everything from the session in
     `refresh_view()`. The app calls it when the view is shown and the session's version has
@@ -554,6 +554,11 @@ class EmptyState(Static):
             text.append("\n\n")
             text.append_text(keys_hint(*pairs))
         self.update(text)
+
+
+class Hint(EmptyState, can_focus=True):
+    """An empty state that takes focus, so the view's own keys work while it shows (the
+    Budget view's v and s, Paydays' p)."""
 
 
 # ── Charts ────────────────────────────────────────────────────────────────────

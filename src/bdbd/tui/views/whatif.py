@@ -1,4 +1,4 @@
-"""The What if view (6): try something without changing anything.
+"""The What if view (7): try something without changing anything.
 
 Left, the changes being tried (the session's sandbox), each switched on or off. Right, the
 answer, in one of two modes:
@@ -536,7 +536,7 @@ class WhatIfView(View):
         keys = self.query_one("#card-keys", KeyStrip)
         if key == "plan":
             on = s.scenario.extra_enabled
-            card.fit_title("The payoff plan", "tried from Debts (5)")
+            card.fit_title("The payoff plan", "tried from Debts (6)")
             head.update(
                 Text.assemble(
                     (s.scenario.extra_label or "A payoff plan", ""),
@@ -1354,7 +1354,7 @@ class WhatIfView(View):
             lines.append(
                 Text(
                     f"! It stops working again on {fmt_date(back, today, weekday=True)}: a later "
-                    "bill lands before the next income, so the earliest day isn't a one-way door.",
+                    "bill lands before the next payday, so the earliest day isn't a one-way door.",
                     style=AMBER,
                 )
             )
@@ -1389,7 +1389,7 @@ class WhatIfView(View):
         """e or enter: change the selected change."""
         key = self._selected()
         if key == "plan":
-            bdbd(self).notify("That's a payoff plan: change it in Debts (5) with p.")
+            bdbd(self).notify("That's a payoff plan: change it in Debts (6) with p.")
         elif isinstance(key, int):
             change_form.open_edit(self.app, key)
 
@@ -1479,7 +1479,7 @@ class WhatIfView(View):
         self.toggle_class("-table")
 
     def action_measure(self) -> None:
-        """m: the balance, or what's spare (the balance minus bills due before payday)."""
+        """m: the balance, or what's spare (what's left the day before the next payday)."""
         self.measure = "spare" if self.measure == "balance" else "balance"
         self._restart()
 

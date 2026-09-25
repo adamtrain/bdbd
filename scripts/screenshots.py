@@ -23,14 +23,15 @@ SELL_THE_CAR = [
 
 SHOTS: list[tuple[str, dict]] = [
     ("overview", {}),
-    ("calendar", {"keys": ["2", "right", "right", "right", "right", "right", "right", "right"]}),
-    ("forecast", {"keys": ["3", "right_square_bracket", "right_square_bracket", "wait:600"]}),
-    ("budget", {"keys": ["4", "down", "down", "down", "down", "down"]}),  # the Car loan
-    ("debts", {"keys": ["5"]}),
-    ("plan", {"keys": ["5", "p", "wait:800"]}),
+    ("paydays", {"keys": ["2", "down"]}),  # the next paycheck
+    ("calendar", {"keys": ["3", "right", "right", "right", "right", "right", "right", "right"]}),
+    ("forecast", {"keys": ["4", "right_square_bracket", "right_square_bracket", "wait:600"]}),
+    ("budget", {"keys": ["5", "down", "down", "down", "down", "down"]}),  # the Car loan
+    ("debts", {"keys": ["6"]}),
+    ("plan", {"keys": ["6", "p", "wait:800"]}),
     (
         "whatif",
-        {"keys": ["6", "right_square_bracket", "right_square_bracket"], "what_if": SELL_THE_CAR},
+        {"keys": ["7", "right_square_bracket", "right_square_bracket"], "what_if": SELL_THE_CAR},
     ),
     ("add", {"keys": ["a", *"Netflix", "tab", *"15.49", "tab", *"monthly on the 12th", "tab"]}),
 ]

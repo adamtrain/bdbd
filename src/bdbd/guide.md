@@ -90,16 +90,20 @@ incidentals, charged a little each day after the start date in every projection 
 cent over any span). `--weekly-spend A` overrides it for one run. Ask the person for it rather
 than assume 0.
 
-**Spare money**: the balance on a date minus everything due after it and before the next income
-(everyday spending included). This is the answer to "how much will I have on DATE": report
-`spare_balance` and name the bills it deducted; give the raw `ending_balance` when asked.
+**Spare money**: the balance on a date plus everything that comes and goes after it until the
+next payday (the next date of an income flagged `payday`; with none, the next income): bills and
+everyday spending out, any other money in (a refund) on its day. So it's what's left the day
+before that payday. This is the answer to "how much will I have on DATE": report
+`spare_balance` and name the bills it deducted and any money it added; give the raw
+`ending_balance` when asked.
 
 ## Commands and their data
 
 ### Where things stand
 - `bdbd overview` → `today`, `balance` (the opening block for today), `spare_balance`, `spare
-  {date, balance, next_income {date,name,amount}, committed_total, committed_lifestyle,
-  committed_before_next_income[{date,name,amount}], spare_balance}`, `low_point {date, balance,
+  {date, balance, next_payday {date,name,amount}, committed_total, committed_lifestyle,
+  committed_before_payday[{date,name,amount}], income_before_payday[{date,name,amount}],
+  income_total, spare_balance}`, `low_point {date, balance,
   horizon_days}` (next 90 days), `monthly {income, bills, everyday, net}`, `upcoming[]` (ledger
   rows until the next income after today, at least 10 days, at most 12 rows), `debts {…}` (as
   `bdbd debts`). The same numbers the app's overview shows.
@@ -113,23 +117,33 @@ than assume 0.
   expense, debt_payment, extra_payment, payoff, settle. `balance_after` is right after the item;
   `end_of_day_balance` is at the close of its day, after that day's everyday spending: quote it
   for "what's left after Rent" (it's what the app shows, and what low points use). Overview
-  `upcoming[]` and balance `since_recorded[]` rows carry it too.
+  `upcoming[]` and balance `since_recorded[]` rows carry it too. A day's items are listed money
+  in first, then money out, each largest first, then by name (`balance_after` follows that
+  order; the day ends the same either way); `project` ledgers and `cal` days list them so too.
 - `bdbd cal [MONTH] [--balance A]` (oct, 2026-11, next, +2) → `month`, `opening`, `days[{date, items[{name,
   amount, kind}], net, balance}]` (end-of-day balances from today on; past days have no balance).
 
 ### Flows
 - `bdbd ls [--income|--expenses] [--tag T] [--all]` → `flows[]`, `count`. A flow: `{id, name,
-  kind, amount, schedule (English), rrule, dtstart, until, next, active, tags[], weekend, notes,
-  debt, monthly}`. `--all` includes paused flows.
-- `bdbd show FLOW` → the flow plus `upcoming[]` (next dates), `monthly`, and for debts
-  `debt_outlook {balance_at_as_of, payoff_date, payments_remaining, total_paid_remaining,
-  total_interest_remaining}`. FLOW is a name (any case) or id. `bdbd debt show FLOW` is the
-  same (its envelope says `"command": "show"`).
+  kind, amount, schedule (English), rrule, dtstart, until, next, active, tags[], weekend, payday,
+  notes, debt, monthly}`. `--all` includes paused flows. `payday` is true for an income whose
+  every date starts a pay cycle (the paycheck; see `bdbd paydays`).
+- `bdbd show FLOW` → the flow plus `upcoming[]` (next dates), `monthly`, `next_12_months`,
+  and for debts `debt_outlook {balance_at_as_of, payoff_date, payments_remaining,
+  total_paid_remaining, total_interest_remaining}`. `monthly` is the steady monthly amount;
+  `next_12_months` is what it really brings in or costs from today through the day before the
+  same date next year, so an end date, a later start or a loan's payoff cuts it short (like
+  `bdbd spend FLOW --months 12`; a paused flow's is what it would be if resumed). FLOW is a
+  name (any case) or id. `bdbd debt show FLOW` is the same (its envelope says
+  `"command": "show"`).
 - `bdbd add NAME AMOUNT WHEN… [--income | --kind K] [--when TEXT] [--from D] [--until D]
-  [--tag T,…] [--ach | --weekend W] [--notes S] [--paused]` → the new flow.
+  [--tag T,…] [--ach | --weekend W] [--notes S] [--paused] [--payday | --no-payday]` → the new
+  flow. Without either payday flag, the budget's first regular income (one that comes at least
+  monthly, while no other is a payday) becomes a payday; pass `--payday` for a paycheck and
+  `--no-payday` for a regular income that isn't one (interest, a side income).
 - `bdbd edit FLOW [--name] [--amount] [--when TEXT] [--from D] [--until D | --no-until]
-  [--income | --expense] [--tag T] [--untag T] [--tags A,B] [--ach | --weekend W] [--notes S]`
-  → the updated flow.
+  [--income | --expense] [--tag T] [--untag T] [--tags A,B] [--ach | --weekend W] [--notes S]
+  [--payday | --no-payday]` → the updated flow.
 - `bdbd rm FLOW` → `{removed: flow}` (its debt record and events go too; nothing asks first).
 - `bdbd pause FLOW` / `bdbd resume FLOW` → the flow. Paused flows leave every projection.
 - `bdbd tags` → `tags[{name, flows, flow_names[], expense_monthly, income_monthly}]`;
@@ -144,7 +158,8 @@ A debt is an expense flow (the payment) plus its terms.
   `interest_remaining` is the interest still to pay **from today** until payoff, so balance +
   interest_remaining = everything still to pay. A debt that is never paid off at its current
   payment has `paid_off_on` and `interest_remaining` null, is left out of the total, and a
-  warning names it.
+  warning names it. Debts are listed soonest paid off first (never last), then the most owed,
+  then by name.
 - `bdbd debt set FLOW --balance A --rate R --compounding simple|daily|monthly|continuous
   [--as-of D] [--day-count actual/365|actual/360|30/360] [--capitalize | --no-capitalize]
   [--payment-mode fixed|interest_only|percent_of_balance] [--payment-pct P]
@@ -169,6 +184,17 @@ A debt is an expense flow (the payment) plus its terms.
 
 ### Questions
 Every question accepts the what-if flags below. Horizons: `--until DATE` or `--months N`.
+- `bdbd paydays [--months N (3)] [--weekly-spend A]` → `today`, `weekly_spend`, `paydays[]`
+  (the incomes that start pay cycles), `cycles[{start, end, days, current, open, paycheck,
+  paychecks[], bills[], bills_total, everyday, left_before_everyday, left, money_in[]}]`. A
+  pay cycle runs from a payday to the day before the next one; the first is the cycle under
+  way (`current`), the last may be `open` (no payday after it in the window, so it stops at
+  the window's end). **`left`** = paycheck + other money in − bills − everyday (the everyday
+  spending allowance for its days): what's free to spend or save in that cycle;
+  `left_before_everyday` leaves everyday spending out. Bills are every payment out in the cycle
+  (debt payments included); `money_in` is other money coming in during it (a refund), which
+  counts. Past days of the current cycle are what was scheduled. Items `{date, name, kind,
+  amount}`. No payday → no cycles, and a warning says so.
 - `bdbd project [--until D | --months N (12)] [--as-of D] [--balance A] [--weekly-spend A]
   [--daily] [--ledger] [--verbose]` → `as_of`, `until`, `opening`, `starting_balance`,
   `weekly_spend`, `lifestyle_total`, **`spare_balance`**, `spare {…}`, `ending_balance`,
@@ -179,7 +205,8 @@ Every question accepts the what-if flags below. Horizons: `--until DATE` or `--m
 - `bdbd spend [TAG_OR_FLOW…] [--exclude X] [--income] [--from D] [--until D | --months N (1)]`
   → **`total`**, `matched[{term, as: tag|flow}]`, `excluded`, `by_flow[{flow, name, tags,
   count, total}]` (largest first), `items[{date, name, amount}]`, `lifestyle_total`. No terms =
-  everything going out, everyday spending included (tag `lifestyle`).
+  everything going out, everyday spending included (tag `lifestyle`). `--months N` is N whole
+  months: through the day before the same date N months on (a yearly bill counts once).
 - `bdbd summary [--tag T] [--actual --months N] [--by tag|flow|both] [--all]` → `net
   {income_monthly, expense_monthly, net_monthly, income_annual, expense_annual, net_annual}`
   (bills only: everyday spending is `weekly_spend`), `by_flow[{name, amount, monthly, annual,
@@ -288,15 +315,20 @@ and interest applied, older events dropped). What happened is reported under `ti
 ## Recipes
 
 **"Where do I stand?"** `bdbd overview`: report `balance.balance`, `spare_balance` (naming
-`spare.next_income`), `low_point` and the warnings.
+`spare.next_payday`), `low_point` and the warnings.
 
 **"How much will I have on Dec 12?"**
 ```
 bdbd project --until 2026-12-12 --select spare_balance,ending_balance,spare,opening
 ```
-Report `spare_balance`, naming `spare.committed_before_next_income`. If `opening.source` is
+Report `spare_balance`, naming `spare.committed_before_payday` (and any
+`spare.income_before_payday`). If `opening.source` is
 `carried` from an old date or `none`, ask for the current balance and record it with
 `bdbd balance AMOUNT`.
+
+**"How much of this paycheck is free?"** `bdbd paydays --months 1 --select cycles`: report
+the current cycle's `left` (and `left_before_everyday`), naming its biggest bills and any
+`money_in`; a cycle with a negative `left` means that paycheck doesn't cover its bills.
 
 **"What will I spend on the car by Dec 12?"** `bdbd tags` (find the tag), then
 `bdbd spend car --until 2026-12-12 --select total,by_flow`.
@@ -347,7 +379,7 @@ CREATE TABLE bdbd_balance (id INTEGER PRIMARY KEY, as_of TEXT NOT NULL UNIQUE,
 ## Error codes
 
 `usage`, `db_not_found`, `db_exists`, `db_not_empty`, `db_newer_than_cli`, `unknown_flow`,
-`duplicate_flow`, `invalid_name`, `invalid_amount`, `negative_amount`, `invalid_rate`,
+`duplicate_flow`, `invalid_name`, `invalid_payday`, `invalid_amount`, `negative_amount`, `invalid_rate`,
 `invalid_date`, `invalid_schedule`, `invalid_rrule`, `invalid_tag`, `unknown_tag`,
 `duplicate_tag`, `unknown_term`, `unknown_config`, `debt_requires_expense`, `no_debt`,
 `invalid_debt`, `invalid_event`, `unknown_event`, `invalid_scenario`, `scenario_unknown_flow`,

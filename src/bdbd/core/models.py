@@ -92,6 +92,7 @@ class Flow:
     debt: Debt | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    payday: bool = False  # an income whose every date starts a pay cycle (a paycheck)
 
     @property
     def is_debt(self) -> bool:
@@ -135,6 +136,7 @@ class EffectiveFlow:
     debt: Debt | None = None
     origin: str = "db"  # "db" | "scenario"
     weekend: Weekend = Weekend.NONE
+    payday: bool = False  # each of its dates starts a pay cycle
 
     def amount_on(self, day: date) -> int:
         cents = self.base_cents

@@ -1,4 +1,4 @@
-"""The Forecast (3): the balance over the months ahead.
+"""The Forecast (4): the balance over the months ahead.
 
 The same numbers as `bdbd project --until END`: where the balance starts and ends, what's spare
 then, the lowest point, money in and out, interest paid and the debt left at the end. A chart of
@@ -507,7 +507,7 @@ class ForecastView(View):
             ],
         ]
         spare = d["spare"] or {}
-        nxt = spare.get("next_income")
+        nxt = spare.get("next_payday")
         spare_row: list[str | Text] | None = None
         if d["spare_balance"] is not None and nxt:  # its note once the room is known
             spare_row = ["Spare then", bold_balance(cents_of(d["spare_balance"]), low), Text()]
@@ -876,18 +876,22 @@ def _faint(note: str | Text) -> Text:
 
 
 def _spare_note(spare: dict, today: date, room: int = 1000) -> str:
-    """'until Paycheck on Fri Oct 2 · after Rent, Gym and everyday spending', or as much of it
-    as fits in `room`: the bills it counts go first, then the weekday, never half a date."""
-    nxt = spare["next_income"]
+    """'until Paycheck on Fri Oct 2 · after Rent, Gym and everyday spending · with Tax refund
+    in', or as much of it as fits in `room`: the money coming in goes first, then the bills it
+    counts, then the weekday, never half a date."""
+    nxt = spare["next_payday"]
     day = date.fromisoformat(nxt["date"])
-    names = [c["name"] for c in spare["committed_before_next_income"]]
+    names = [c["name"] for c in spare["committed_before_payday"]]
     shown = list(dict.fromkeys(names))
     if len(shown) > 3:
         shown = [*shown[:3], f"{len(shown) - 3} more"]
     if cents_of(spare["committed_lifestyle"]):
         shown.append("everyday spending")
+    coming = list(dict.fromkeys(c["name"] for c in spare["income_before_payday"]))
     long = f"until {nxt['name']} on {fmt_date(day, today, weekday=True)}"
-    tries = [f"{long} {DOT} after {join(shown)}"] if shown else []
+    after = f"{long} {DOT} after {join(shown)}" if shown else long
+    tries = [f"{after} {DOT} with {join(coming)} in"] if coming else []
+    tries += [after] if shown else []
     tries += [
         long,
         f"until {nxt['name']} on {fmt_date(day, today)}",

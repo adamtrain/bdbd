@@ -60,7 +60,7 @@ async def test_headline_and_list_are_bdbd_debts(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5")
+        await pilot.press("6")
         want = agent.debts_json(ask.debts(app.session.budget))
         head = _text(app, "#debts-headline")
         assert money(cents_of(want["total_owed"])) in head
@@ -86,7 +86,7 @@ async def test_the_selected_debt_is_bdbd_show_and_its_schedule(make_app) -> None
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5")
+        await pilot.press("6")
         budget = app.session.budget
         model = budget.model(include_inactive=True)
         for i, row in enumerate(ask.debts(budget)):
@@ -101,10 +101,11 @@ async def test_the_selected_debt_is_bdbd_show_and_its_schedule(make_app) -> None
             payoff = date.fromisoformat(outlook["payoff_date"])
             assert fmt_date(payoff, TODAY) in panel
             assert f"{outlook['payments_remaining']} payments to go" in panel
-            # interest to go from today (`bdbd debts`), so owed + interest = all still to pay
-            owed = cents_of(outlook["balance_at_as_of"])
+            # interest to go from today (`bdbd debts`), of the interest over the whole schedule
+            # as it stands (every payment's interest, what's built up since the last included)
+            whole = cents_of(outlook["total_interest_remaining"])
             assert row.interest is not None and money(row.interest) in panel
-            assert f"to go, of {money(owed + row.interest)} in all" in panel
+            assert whole >= row.interest and f"to go, of {money(whole)} in all" in panel
             want, _ = debt_schedule(  # `bdbd debt schedule NAME --all`
                 model, row.key, as_of=TODAY, until=add_months(TODAY, 600), max_rows=None
             )
@@ -126,7 +127,7 @@ async def test_the_cursor_moves_the_detail_and_enter_opens_the_schedule(make_app
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5")
+        await pilot.press("6")
         debts = _debts_list(app)
         assert app.screen.focused is debts
         assert "Credit card" in _text(app, "#debt-panel")
@@ -150,7 +151,7 @@ async def test_small_screens_swap_the_schedule_in(make_app) -> None:
     app = make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        await pilot.press("5")
+        await pilot.press("6")
         view = _view(app)
         assert view.has_class("-short") and view.has_class("-cramped")
         assert not _text(app, "#schedule-panel")
@@ -167,7 +168,7 @@ async def test_no_debts_says_so_and_offers_to_add_one(empty_file, make_app) -> N
     app = make_app(empty_file)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5")
+        await pilot.press("6")
         assert _view(app).has_class("-empty")
         text = screen_text(app)
         assert "No debts. Lovely." in text and "add a debt" in text
@@ -181,7 +182,7 @@ async def test_the_what_if_lens_shows_in_the_numbers(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "down")
+        await pilot.press("6", "down")
         app.session.add_change(Change("extra_payment", "Car loan", "2000", "2026-11-01"))
         app.refresh_views()
         await pilot.pause()
@@ -202,7 +203,7 @@ async def test_recording_an_extra_payment_lands_in_the_budget(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "down", "r")  # Car loan
+        await pilot.press("6", "down", "r")  # Car loan
         form = app.screen
         assert isinstance(form, EventForm)
         await pilot.press(*"500")
@@ -223,7 +224,7 @@ async def test_recording_a_new_rate_from_a_date(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "down", "down", "r")  # Student loan
+        await pilot.press("6", "down", "down", "r")  # Student loan
         form = app.screen
         assert isinstance(form, EventForm)
         await pilot.press("shift+tab", "right")  # What happened: Rate
@@ -250,7 +251,7 @@ async def test_an_event_before_the_balance_date_is_refused(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "down", "r")
+        await pilot.press("6", "down", "r")
         form = app.screen
         assert isinstance(form, EventForm)
         await pilot.press(*"100")
@@ -276,7 +277,7 @@ async def test_deleting_an_event_asks_first(budget_file, make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "down")
+        await pilot.press("6", "down")
         assert "x deletes it" in _text(app, "#debt-panel")
         await pilot.press("x")
         assert isinstance(app.screen, ConfirmScreen)
@@ -294,7 +295,7 @@ async def test_stop_tracking_keeps_the_payment(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5")  # Credit card
+        await pilot.press("6")  # Credit card
         await pilot.press("u")
         assert isinstance(app.screen, ConfirmScreen)
         assert "stays as a plain expense" in screen_text(app)
@@ -310,7 +311,7 @@ async def test_a_adds_a_debt_and_e_edits_its_terms(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "a")
+        await pilot.press("6", "a")
         form = app.screen
         assert isinstance(form, FlowForm) and form.initial["loan"]
         await pilot.press("escape")
@@ -324,7 +325,7 @@ async def test_help_lists_the_views_keys(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "question_mark")
+        await pilot.press("6", "question_mark")
         assert isinstance(app.screen, HelpScreen)
         text = screen_text(app)
         for words in (
@@ -364,7 +365,7 @@ async def test_the_plan_is_bdbd_plan(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "p")
+        await pilot.press("6", "p")
         plan = app.screen
         assert isinstance(plan, PlanScreen)
         await _settle(app, pilot)
@@ -398,7 +399,7 @@ async def test_the_plan_can_start_later_and_says_when_it_cant(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "p")
+        await pilot.press("6", "p")
         plan = app.screen
         assert isinstance(plan, PlanScreen)
         start = plan.field("start")
@@ -417,7 +418,7 @@ async def test_trying_the_plan_puts_it_in_the_what_if(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "p")
+        await pilot.press("6", "p")
         await _settle(app, pilot)
         plan = app.screen
         assert isinstance(plan, PlanScreen)
@@ -446,7 +447,7 @@ async def test_the_plan_without_a_balance_skips_the_cash_check(tmp_path) -> None
     app = BdbdApp(path)
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("5", "p")
+        await pilot.press("6", "p")
         await _settle(app, pilot)
         text = screen_text(app)
         assert "Lowest balance" in text and "unknown" in text

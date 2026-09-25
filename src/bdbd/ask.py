@@ -78,15 +78,37 @@ class Details:
     flow: Flow
     upcoming: list[date]
     monthly: int
+    next_year: int = 0  # what it brings in (+) or costs (-) in the next 12 months, on its dates
     debt: dict | None = None  # debt_schedule() output (as of today) for debts
+
+
+def months_ahead(start: date, months: int) -> date:
+    """The last day of the `months` months from `start`: the day before the same date then
+    (so a yearly bill due today counts once in the next 12 months, not twice)."""
+    return add_months(start, months) - timedelta(days=1)
+
+
+def next_year(budget: Budget, flow: Flow, model: EffectiveModel | None = None) -> int:
+    """What a flow brings in (+) or costs (-) in the next 12 months on its real dates, so an end
+    date, a later start or a loan's payoff cuts it short (`bdbd spend NAME --months 12`).
+
+    A paused flow counts as if it were running, like its other numbers.
+    """
+    model = model or budget.model(include_inactive=True)
+    ef = next((f for f in model.flows if f.key == flow.id), None)
+    if ef is None:
+        return 0
+    today = budget.today
+    res = engine.run(EffectiveModel(flows=[ef]), as_of=today, until=months_ahead(today, 12))
+    return sum(e.delta_cents for e in res.ledger if e.key == ef.key)
 
 
 def details(budget: Budget, flow: Flow, n: int = 6, *, lst: Listing | None = None) -> Details:
     # `lst`: an up-to-date listing(budget, include_inactive=True) to reuse (the Budget view's)
     lst = lst or listing(budget, include_inactive=True)
+    model = budget.model(include_inactive=True)
     debt = None
     if flow.debt is not None:
-        model = budget.model(include_inactive=True)
         debt, _ = debt_schedule(
             model,
             flow.id,
@@ -99,6 +121,7 @@ def details(budget: Budget, flow: Flow, n: int = 6, *, lst: Listing | None = Non
         flow=flow,
         upcoming=upcoming_dates(flow, budget.today, n) if flow.active else [],
         monthly=lst.monthly.get(flow.id, 0),
+        next_year=next_year(budget, flow, model),
         debt=debt,
     )
 
@@ -175,8 +198,13 @@ def debts(budget: Budget, model: EffectiveModel | None = None) -> list[DebtRow]:
                 tags=tuple(sorted(f.tags)),
             )
         )
-    rows.sort(key=lambda r: (r.paid_off_on or date.max, r.name))
+    rows.sort(key=debt_order)
     return rows
+
+
+def debt_order(row: DebtRow) -> tuple:
+    """Debts are listed soonest paid off first (never last), then the most owed, then by name."""
+    return (row.paid_off_on or date.max, -row.balance, row.name.casefold())
 
 
 # ── Upcoming and calendar ─────────────────────────────────────────────────────
@@ -296,6 +324,8 @@ def calendar(
             for d, bal in w.run.daily:
                 if d in days:
                     days[d].balance = bal
+    for day in days.values():  # past days come flow by flow; list them like the rest
+        day.items.sort(key=lambda it: engine.same_day_order(it[1], it[0]))
     return [days[d] for d in sorted(days)], start
 
 
@@ -388,6 +418,157 @@ def coming_up(p: Picture, today: date) -> list[engine.LedgerEntry]:
     stop = income[0].date if income else today + timedelta(days=MIN_UPCOMING_DAYS)
     stop = max(stop, today + timedelta(days=MIN_UPCOMING_DAYS))
     return [e for e in entries if e.date <= stop][:MAX_UPCOMING_ROWS]
+
+
+# ── Pay cycles ────────────────────────────────────────────────────────────────
+
+PAY_CYCLE_MONTHS = 12  # how far ahead the Paydays view looks
+_NEXT_PAYDAY_DAYS = 93  # past the window: how far to look for the payday that ends a cycle
+_LAST_PAYDAY_DAYS = 400  # before today: how far back to look for the current cycle's payday
+
+
+@dataclass(frozen=True)
+class CycleItem:
+    """Money in (+) or out (-) on a day of a pay cycle."""
+
+    date: date
+    name: str
+    cents: int
+    kind: str  # income | expense | debt_payment | extra_payment | payoff | settle
+    key: FlowKey | None = None
+    payday: bool = False  # a paycheck: the money the cycle starts with
+
+
+@dataclass(frozen=True)
+class PayCycle:
+    """From a payday to the day before the next one: what that paycheck has to cover.
+
+    `left` is what's left of the paycheck, and any other money coming in during the cycle (a
+    refund, in `money_in`), once the cycle's bills and its everyday spending allowance are
+    paid: what can be spent or saved freely.
+    """
+
+    start: date
+    end: date
+    items: tuple[CycleItem, ...]  # by date, a day's items in listing order
+    everyday: int  # the everyday spending allowance for its days (positive)
+    open: bool = False  # no payday after it in the window: it's cut off at `end`
+
+    @property
+    def days(self) -> int:
+        return (self.end - self.start).days + 1
+
+    @property
+    def paychecks(self) -> list[CycleItem]:
+        return [i for i in self.items if i.payday]
+
+    @property
+    def paycheck(self) -> int:
+        return sum(i.cents for i in self.paychecks)
+
+    @property
+    def money_in(self) -> list[CycleItem]:
+        return [i for i in self.items if i.cents > 0 and not i.payday]
+
+    @property
+    def bills(self) -> list[CycleItem]:
+        return [i for i in self.items if i.cents < 0]
+
+    @property
+    def bills_total(self) -> int:
+        return -sum(i.cents for i in self.bills)
+
+    @property
+    def money_in_total(self) -> int:
+        return sum(i.cents for i in self.money_in)
+
+    @property
+    def left_before_everyday(self) -> int:
+        return self.paycheck + self.money_in_total - self.bills_total
+
+    @property
+    def left(self) -> int:
+        return self.left_before_everyday - self.everyday
+
+    def holds(self, day: date) -> bool:
+        return self.start <= day <= self.end
+
+
+@dataclass(frozen=True)
+class PayCycles:
+    cycles: list[PayCycle]
+    paydays: list[str]  # the incomes that start pay cycles
+    weekly: int  # the everyday spending allowance a week that the cycles use
+
+
+def everyday_for(weekly_cents: int, days: int) -> int:
+    """The everyday spending allowance for a number of days (it's charged daily)."""
+    return int((Decimal(weekly_cents) * days / 7).quantize(1, rounding=ROUND_HALF_UP))
+
+
+def pay_cycles(
+    budget: Budget,
+    *,
+    months: int = PAY_CYCLE_MONTHS,
+    model: EffectiveModel | None = None,
+    weekly: int | None = None,
+) -> PayCycles:
+    """Every pay cycle from the one under way through `months` ahead.
+
+    A cycle runs from a payday (any date of an income flagged payday) to the day before the
+    next. From today on it's the projection (`model`, so a what-if counts); the current
+    cycle's days before today are what the stored budget scheduled, like the calendar's past.
+    """
+    today = budget.today
+    model = model or budget.model()
+    weekly = budget.weekly_for(model, weekly)
+    horizon = add_months(today, months)
+    res = engine.run(model, as_of=today, until=horizon + timedelta(days=_NEXT_PAYDAY_DAYS))
+    paying = {f.key for f in model.flows if f.payday and f.kind == Kind.INCOME}
+    ahead = [
+        CycleItem(
+            e.date, e.name, e.delta_cents, e.kind, e.key, e.key in paying and e.delta_cents > 0
+        )
+        for e in res.ledger
+        if e.kind != "lifestyle"
+    ]
+    # the cycle under way started on the last payday before today: its days so far, as scheduled
+    stored = budget.flows()
+    yesterday = today - timedelta(days=1)
+    last = max(
+        (
+            d
+            for f in stored
+            if f.payday and f.kind == Kind.INCOME
+            for d in occurrences(
+                f.rrule, f.dtstart, f.until, today - timedelta(days=_LAST_PAYDAY_DAYS), yesterday,
+                f.weekend,
+            )
+        ),
+        default=None,
+    )  # fmt: skip
+    past: list[CycleItem] = []
+    if last is not None:
+        for f in stored:
+            sign = 1 if f.kind == Kind.INCOME else -1
+            kind = "debt_payment" if f.debt is not None else str(f.kind)
+            for d in occurrences(f.rrule, f.dtstart, f.until, last, yesterday, f.weekend):
+                paid = f.payday and f.kind == Kind.INCOME
+                past.append(CycleItem(d, f.name, sign * f.amount_cents, kind, f.id, paid))
+        past.sort(key=lambda i: (i.date, *engine.same_day_order(i.cents, i.name, i.key)))
+    everything = past + ahead
+    starts = sorted({i.date for i in everything if i.payday})
+    cycles: list[PayCycle] = []
+    for n, start in enumerate(starts):
+        if start > horizon:
+            break
+        nxt = starts[n + 1] if n + 1 < len(starts) else None
+        end = nxt - timedelta(days=1) if nxt else horizon
+        inside = tuple(i for i in everything if start <= i.date <= end)
+        days = (end - start).days + 1
+        cycles.append(PayCycle(start, end, inside, everyday_for(weekly, days), open=nxt is None))
+    names = sorted((f.name for f in model.flows if f.key in paying), key=str.casefold)
+    return PayCycles(cycles, names, weekly)
 
 
 # ── Tags ──────────────────────────────────────────────────────────────────────

@@ -187,6 +187,7 @@ def _base_effective(flow: Flow) -> EffectiveFlow:
         debt=flow.debt,
         origin="db",
         weekend=flow.weekend,
+        payday=flow.payday,
     )
 
 
@@ -375,6 +376,7 @@ def build_effective_model(
                 debt=debt,
                 origin="db",
                 weekend=f.weekend,
+                payday=f.payday,
             )
         )
 

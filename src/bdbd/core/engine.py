@@ -6,7 +6,7 @@ and produces a SimResult with daily balances, a ledger, and per-debt amortizatio
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
@@ -16,7 +16,8 @@ from bdbd.core.models import EffectiveFlow, EffectiveModel, EventType, FlowKey, 
 from bdbd.core.money import cents_to_str, dec_to_str, q
 from bdbd.core.recurrence import occurrences
 
-# same-day ordering
+# the order a day's events are applied in (the debt math needs it: a scheduled payment before an
+# extra one or a payoff); they're listed in `same_day_order`
 P_PARAM = 0  # rate_change / balance_adjustment / payment_change
 P_INCOME = 2
 P_DEBT_PAYMENT = 3
@@ -153,6 +154,25 @@ class SimResult:
         return self.daily[-1][1] if self.daily else self.starting_balance_cents
 
 
+def same_day_order(delta_cents: int, name: str, key: object = "") -> tuple:
+    """How one day's items are listed everywhere: money in before money out, each largest
+    first, then by name."""
+    return (delta_cents <= 0, -abs(delta_cents), name.casefold(), str(key))
+
+
+def _list_in_day_order(ledger: list[LedgerEntry], start: int, opening: int) -> None:
+    """Put the day's items from `start` on in listing order, each with the running balance that
+    order gives (the day still ends on the same balance)."""
+    todays = ledger[start:]
+    if len(todays) < 2:
+        return
+    todays.sort(key=lambda e: same_day_order(e.delta_cents, e.name, e.key))
+    running = opening
+    for i, e in enumerate(todays):
+        running += e.delta_cents
+        ledger[start + i] = replace(e, balance_after_cents=running)
+
+
 @dataclass(order=True)
 class _Event:
     date: date
@@ -277,6 +297,7 @@ def run(
             st.accrue(day)
 
         # phase 2..5: cash events (already sorted by priority)
+        listed, opening = len(result.ledger), balance
         for e in todays:
             if e.priority == P_PARAM:
                 continue
@@ -399,6 +420,8 @@ def run(
                     -cash,
                     DebtSplit(res.interest_cents, res.principal_cents, res.balance_after),
                 )
+
+        _list_in_day_order(result.ledger, listed, opening)
 
         if in_window and weekly_spend_cents and day > as_of:
             due = int(

@@ -1,4 +1,4 @@
-"""The Budget view (4): what's in the budget, and where the money goes.
+"""The Budget view (5): what's in the budget, and where the money goes.
 
 Two halves, switched with v. **Flows**: every income and expense, grouped Income / Expenses /
 Paused and sorted by next date, with the selected flow's details on the right. **Tags**: each
@@ -26,7 +26,6 @@ from textual.widgets import Input, Static
 
 from bdbd import ask
 from bdbd.core import repo
-from bdbd.core.dates import add_months
 from bdbd.core.models import EffectiveModel, Flow, Kind
 from bdbd.core.queries.spend import spend as spend_query
 from bdbd.core.queries.summary import summary
@@ -35,8 +34,8 @@ from bdbd.tui.forms import parse_money
 from bdbd.tui.session import Session
 from bdbd.tui.widgets import (
     Column,
-    EmptyState,
     Header,
+    Hint,
     Item,
     Panel,
     Picker,
@@ -114,14 +113,6 @@ def group_monthly(s: Session, keys: frozenset[Hashable]) -> int:
     return s.cached(("budget.group", keys), compute)
 
 
-def tag_yearly(s: Session, name: str, *, income: bool) -> int:
-    """A tag's steady-state money a year (`bdbd summary` by_tag annual)."""
-    row = next((r for r in budget_summary(s)["by_tag"] if r["tag"] == name), None)
-    if row is None:
-        return 0
-    return cents_of(row["income_annual" if income else "expense_annual"])
-
-
 def tag_spend(s: Session, name: str, months: int, *, income: bool) -> int:
     """What a tag costs (or brings in) from today: `bdbd spend TAG [--income] --months N`."""
 
@@ -130,7 +121,7 @@ def tag_spend(s: Session, name: str, months: int, *, income: bool) -> int:
         data, _ = spend_query(
             model,
             as_of=s.today,
-            until=add_months(s.today, months),
+            until=ask.months_ahead(s.today, months),
             terms=[name],
             income=income,
             known_tags=frozenset(t.name for t in s.tags()),
@@ -166,14 +157,14 @@ def matches(flow: Flow, needle: str) -> bool:
 
 
 def tag_lines(s: Session, row: ask.TagRow) -> list[CardLine]:
-    """What the card on the right says about a tag: a month, a year, the months ahead."""
+    """What the card on the right says about a tag: a month, then the months ahead on their
+    real dates (end dates and all)."""
     income = tag_is_income(s, row.name)
     sign = 1 if income else -1
     monthly = row.income_monthly if income else row.expense_monthly
     lines: list[CardLine] = []
     if monthly:
         lines.append(Pair("Per month", signed(sign * monthly)))
-        lines.append(Pair("Per year", signed(sign * tag_yearly(s, row.name, income=income))))
     else:
         why = {"paused": "nothing while it's paused", "one-off": "nothing steady, one-offs only"}
         quiet = why.get(tag_quiet(s, row.name), "nothing ahead")
@@ -229,10 +220,6 @@ class FilterInput(Input):
     def on_blur(self) -> None:
         if not self.value.strip():
             self._view().clear_filter(focus=False)
-
-
-class Hint(EmptyState, can_focus=True):
-    """An empty state that takes focus, so the view's keys (v, s, a) work while it shows."""
 
 
 FLOWS_ONLY = {"edit", "pause", "delete", "loan", "filter", "clear_filter"}
@@ -477,7 +464,15 @@ class BudgetView(View):
                 continue
             if items:
                 items.append(None)
-            flows.sort(key=lambda f: (lst.next[f.id] is None, lst.next[f.id] or today, f.name))
+            # by next date; the same day, like every list of a day's items: largest, then name
+            flows.sort(
+                key=lambda f: (
+                    lst.next[f.id] is None,
+                    lst.next[f.id] or today,
+                    -f.amount_cents,
+                    f.name.casefold(),
+                )
+            )
             items.append(self._group_header(title, flows, whole))
             items += [self._flow_row(f, lst) for f in flows]
         rows = self.query_one("#flow-list", RowList)

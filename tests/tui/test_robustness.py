@@ -117,7 +117,7 @@ async def test_closing_a_dialog_never_focuses_a_hidden_view(make_app, empty_file
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
         main = _main(app)
-        for view in ("4", "5", "6", "1"):
+        for view in ("2", "5", "6", "7", "1"):
             await pilot.press(view, "b")
             await pilot.pause()
             assert app.screen is not main
@@ -131,7 +131,7 @@ async def test_moving_the_day_takes_focus_back_to_the_grid(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("2")
+        await pilot.press("3")
         await pilot.pause()
         view = app.screen.query_one(CalendarView)
         grid, items = view.query_one(MonthGrid), view.query_one("#items", RowList)
@@ -206,7 +206,7 @@ async def test_clicking_a_choice_in_a_border_picks_it(make_app) -> None:
     app = make_app()
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("3")
+        await pilot.press("4")
         await pilot.pause()
         view = app.screen.query_one(ForecastView)
         # the horizon, in the headline's bottom border (right-aligned)
@@ -265,7 +265,7 @@ async def test_a_plan_tried_with_the_what_if_off_counts_its_changes(make_app, bu
         s.add_change(Change("settle", "Car loan", "13000", "2026-11-01"))
         s.set_lens(False)
         app.refresh_views()
-        await pilot.press("5", "p")
+        await pilot.press("6", "p")
         await pilot.pause(0.4)  # the plan's debounce, then its worker
         await app.workers.wait_for_complete()
         await pilot.pause()
@@ -304,7 +304,7 @@ async def test_one_earliest_search_at_a_time(make_app, monkeypatch) -> None:
     async with app.run_test(size=SIZE) as pilot:
         await pilot.pause()
         app.session.add_change(Change("add_expense", "Flight", "2500", "?"))
-        await pilot.press("6")
+        await pilot.press("7")
         view = app.screen.query_one(whatif.WhatIfView)
         for _ in range(200):  # until the first search is under way
             await pilot.pause(0.02)

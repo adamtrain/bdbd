@@ -1,8 +1,8 @@
-"""The Calendar (2): a month at a glance, and any day in it.
+"""The Calendar (3): a month at a glance, and any day in it.
 
 A 7-column month grid (Mon first) made of one small widget per day, and a day panel answering
 "how much will I have on this day?" with the numbers `bdbd project --until DAY` gives: the
-balance at the end of the day, what's spare before the next income, the day's items with the
+balance at the end of the day, what's spare before the next payday, the day's items with the
 balance after each, and the rest of the month in a few lines. Days and balances come from
 one simulation shared by every month shown (what `bdbd cal` shows); past days show what was
 scheduled, without balances.
@@ -196,6 +196,8 @@ def _build(session: Session, first: date, lensed: bool) -> Month:
         eve = first - timedelta(days=1)  # the footer starts from the end of the day before
         daily = {d: bal for d, bal in run.daily if eve <= d <= last}
         keys = frozenset(ledger_key(e) for e in items)
+    for es in entries.values():  # past days come flow by flow; list them like the rest
+        es.sort(key=lambda e: engine.same_day_order(e.cents, e.name, e.key or ""))
     days = [
         CalDay(d, tuple(es), daily.get(d) if start.known else None)
         for d, es in sorted(entries.items())
@@ -208,8 +210,8 @@ class Answer:
     """What `bdbd project --until DAY` says about the end of a day."""
 
     balance: int
-    spare: int | None  # None: no income ahead to count to
-    income: tuple[str, date, int] | None  # the next income: name, date, amount
+    spare: int | None  # None: no payday ahead to count to
+    payday: tuple[str, date, int] | None  # the next payday: name, date, amount
 
 
 def answer(session: Session, day: date, *, baseline: bool = False) -> Answer | None:
@@ -224,12 +226,12 @@ def answer(session: Session, day: date, *, baseline: bool = False) -> Answer | N
         model = session.model(baseline=not lensed)
         weekly = session.weekly(model)
         spare = SpareCalculator(model, session.today, day, weekly).compute(day, bal)
-        nxt = spare["next_income"]
-        income = None
+        nxt = spare["next_payday"]
+        payday = None
         if nxt is not None:
-            income = (nxt["name"], date.fromisoformat(nxt["date"]), cents_of(nxt["amount"]))
+            payday = (nxt["name"], date.fromisoformat(nxt["date"]), cents_of(nxt["amount"]))
         cents = spare["spare_balance"]
-        return Answer(bal, cents_of(cents) if cents is not None else None, income)
+        return Answer(bal, cents_of(cents) if cents is not None else None, payday)
 
     return session.cached(("calendar_view.answer", day, lensed), compute)
 
@@ -734,16 +736,16 @@ class CalendarView(View):
         rows: list[Fig | Text] = [Fig("At the end of the day", _bold(a.balance, low))]
         if base is not None and base.balance != a.balance:
             rows.append(_delta(a.balance, base.balance))
-        if a.spare is not None and a.income is not None:
+        if a.spare is not None and a.payday is not None:
             rows.append(Fig("Spare", _bold(a.spare, low)))
             if base is not None and base.spare is not None and base.spare != a.spare:
                 rows.append(_delta(a.spare, base.spare))
-            name, on, _ = a.income
+            name, on, _ = a.payday
             when = f" on {fmt_date(on, today, weekday=True)}"
             rows.append(Text.assemble(("before ", FAINT), name, (when, FAINT)))
         else:
             rows.append(Fig("Spare", Text("—", style=FAINT)))
-            rows.append(Text("no income ahead to count to", style=FAINT))
+            rows.append(Text("no payday ahead to count to", style=FAINT))
         return rows
 
     def _draw_month(self, month: Month) -> None:

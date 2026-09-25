@@ -15,7 +15,8 @@ import pytest
 from textual.widgets import Input
 
 from bdbd import cli
-from bdbd.core import repo
+from bdbd.core import db, repo
+from bdbd.core.models import Kind
 from bdbd.tui.app import BdbdApp, MainScreen
 from bdbd.tui.forms import FormScreen, PromptScreen
 from bdbd.tui.modals import HelpScreen
@@ -54,7 +55,7 @@ def _json(path: Path, capsys: pytest.CaptureFixture[str], *argv: str) -> dict:
 
 async def _open(pilot, app: BdbdApp) -> CalendarView:
     await pilot.pause()
-    await pilot.press("2")
+    await pilot.press("3")
     await pilot.pause()
     return app.screen.query_one(CalendarView)
 
@@ -120,9 +121,9 @@ async def test_the_day_panel_is_bdbd_project(make_app, budget_file, capsys) -> N
             assert a is not None
             assert a.balance == cents_of(data["ending_balance"])
             assert a.spare == cents_of(data["spare_balance"])
-            nxt = data["spare"]["next_income"]
-            income = (nxt["name"], date.fromisoformat(nxt["date"]), cents_of(nxt["amount"]))
-            assert a.income == income
+            nxt = data["spare"]["next_payday"]
+            payday = (nxt["name"], date.fromisoformat(nxt["date"]), cents_of(nxt["amount"]))
+            assert a.payday == payday
             figures = _figures(view)
             assert money(a.balance) in figures and money(a.spare) in figures
 
@@ -168,6 +169,31 @@ async def test_past_days_show_what_was_scheduled(make_app) -> None:
 
 
 # ── Moving around ─────────────────────────────────────────────────────────────
+
+
+async def test_a_days_items_list_money_in_first_then_the_largest(make_app, budget_file) -> None:
+    """Past days (worked out flow by flow) list the same way as the days ahead (the engine)."""
+    conn = db.connect(budget_file)
+    try:
+        for name, cents in (("Apps", 500), ("Bills", 5000)):
+            repo.add_flow(conn, name=name, kind=Kind.EXPENSE, amount_cents=cents,
+                          rrule="FREQ=MONTHLY;BYMONTHDAY=3", dtstart=date(2026, 9, 3))  # fmt: skip
+        repo.add_flow(conn, name="Refund", kind=Kind.INCOME, amount_cents=2000, rrule=None,
+                      dtstart=date(2026, 9, 3))  # fmt: skip
+    finally:
+        conn.close()
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        await _open(pilot, app)
+        mine = {"Refund", "Bills", "Gym", "Apps"}
+        for day, want in (
+            (date(2026, 9, 3), ["Refund", "Bills", "Apps"]),  # past: what was scheduled
+            (date(2026, 10, 3), ["Bills", "Gym", "Apps"]),  # ahead: the projection
+        ):
+            info = month_of(app.session, day.replace(day=1)).day(day)
+            assert info is not None
+            names = [e.name for e in info.entries if e.name in mine]
+            assert [n for n in names if n in want] == want, day
 
 
 async def test_keys_move_the_day_across_months(make_app) -> None:

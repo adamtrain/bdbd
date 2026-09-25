@@ -312,9 +312,24 @@ Months120 = Annotated[int | None, _months(120)]
 Months600 = Annotated[int | None, _months(600)]
 
 
-def _window(ctx: Ctx, as_of: str | None, until: str | None, months: int | None, default: int):
+def _window(
+    ctx: Ctx,
+    as_of: str | None,
+    until: str | None,
+    months: int | None,
+    default: int,
+    *,
+    whole_months: bool = False,
+):
+    """The days a command looks at: a horizon ends on the same date N months on; a total
+    (`whole_months`) covers N whole months, so it ends the day before."""
     start = ctx.day(as_of, prefer="nearest") if as_of else ctx.today
-    end = ctx.day(until, base=start) if until else add_months(start, months or default)
+    if until:
+        end = ctx.day(until, base=start)
+    elif whole_months:
+        end = ask.months_ahead(start, months or default)
+    else:
+        end = add_months(start, months or default)
     if end < start:
         raise Problem("--until is before the start date", "usage")
     return start, end
@@ -687,6 +702,7 @@ def show_cmd(
         data = agent.flow_json(f, next_date=info.upcoming[0] if info.upcoming else None)
         data["upcoming"] = [d.isoformat() for d in info.upcoming]
         data["monthly"] = cents_to_str(info.monthly)
+        data["next_12_months"] = cents_to_str(abs(info.next_year))
         if info.debt:
             d = info.debt
             data["debt_outlook"] = {
@@ -814,6 +830,15 @@ def add_cmd(
         str | None, typer.Option("--notes", help="Anything to remember.", show_default=False)
     ] = None,
     paused: Annotated[bool, typer.Option("--paused", help="Add it paused.")] = False,
+    payday: Annotated[
+        bool | None,
+        typer.Option(
+            "--payday/--no-payday",
+            help="An income whose every date starts a pay cycle: your paycheck. "
+            "Default: the budget's first regular income is one.",
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
     """Add an income or expense.
 
@@ -849,6 +874,7 @@ def add_cmd(
             notes=notes,
             active=not paused,
             weekend=wk or Weekend.NONE,
+            payday=payday,
         )
         c.emit(agent.flow_json(f, next_date=next_date(f, c.today)))
 
@@ -900,8 +926,16 @@ def edit_cmd(
     notes: Annotated[
         str | None, typer.Option("--notes", help="New notes ('' clears them).", show_default=False)
     ] = None,
+    payday: Annotated[
+        bool | None,
+        typer.Option(
+            "--payday/--no-payday",
+            help="Whether this income's dates start pay cycles.",
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
-    """Change a flow: its name, amount, schedule, tags or weekend rule."""
+    """Change a flow: its name, amount, schedule, tags, weekend rule or payday."""
     with run("edit") as c:
         b = c.budget
         fid = int(b.find(flow).id)
@@ -931,6 +965,8 @@ def edit_cmd(
             kw["weekend"] = wk
         if notes is not None:
             kw["notes"] = notes or None
+        if payday is not None:
+            kw["payday"] = payday
         b.conn.execute("BEGIN")
         try:
             repo.update_flow(b.conn, fid, **kw)
@@ -1323,6 +1359,41 @@ def project_cmd(
         c.emit(data, warnings)
 
 
+Months3 = Annotated[int | None, _months(3)]
+
+
+@app.command("paydays", rich_help_panel=ASK)
+@what_ifs
+def paydays_cmd(
+    months: Months3 = None,
+    weekly_spend: WeeklyOpt = None,
+    what_if: WhatIf | None = None,
+) -> None:
+    """What's left of each paycheck after its pay cycle's bills and everyday spending.
+
+    A pay cycle runs from a payday to the day before the next one; incomes flagged --payday
+    (your paycheck) start them.
+    """
+    with run("paydays") as c:
+        b = c.budget
+        assert what_if is not None
+        model = b.model(what_if.spec(today=c.today, base=c.today))
+        pc = ask.pay_cycles(
+            b, months=months or 3, model=model, weekly=_money(weekly_spend, "--weekly-spend")
+        )
+        warnings = list(model.warnings)
+        if not pc.paydays:
+            warnings.append(
+                "no payday: mark the income that starts each pay cycle with "
+                "`bdbd edit NAME --payday`"
+            )
+        elif not pc.cycles:
+            warnings.append("no payday in this window")
+        data = agent.pay_cycles_json(pc, c.today)
+        _scenario_block(data, model, False)
+        c.emit(data, warnings)
+
+
 @app.command("spend", rich_help_panel=ASK)
 @what_ifs
 def spend_cmd(
@@ -1363,7 +1434,7 @@ def spend_cmd(
     """
     with run("spend") as c:
         b = c.budget
-        start_day, end = _window(c, as_of, until, months, 1)
+        start_day, end = _window(c, as_of, until, months, 1, whole_months=True)
         assert what_if is not None
         model = b.model(what_if.spec(today=c.today, base=start_day), as_of=start_day)
         data, warnings = spend_query(
