@@ -22,7 +22,8 @@
 - **Where you stand, at a glance.** Run `bdbd` and see your balance, the money that's spare until
   payday, the lowest your balance will get, what's coming up and when each debt is gone.
 - **What each paycheck leaves you.** On payday, Paydays says what's free to spend or save once
-  the bills due before the next paycheck (and your everyday spending) are covered.
+  the bills due before the next paycheck (and your everyday spending) are covered, and charts
+  every paycheck a year ahead, so the tight ones stand out.
 - **Seven views, a keypress apart.** Overview, Paydays, Calendar, Forecast, Budget, Debts and
   What if sit on `1` to `7`. Enter on anything opens it, and `?` lists the keys that work where
   you are.
@@ -88,11 +89,13 @@ The Overview then shows where that leaves you.
 
 **Paydays** (`2`) takes one pay cycle at a time, from a payday to the day before the next: the
 paycheck, the bills that land in the cycle, and what's free to spend or save once they and your
-everyday spending are paid. `v` leaves everyday spending out, and `p` picks which incomes are
-paydays (your paycheck is; a refund isn't, though its money counts in the cycle it lands in).
+everyday spending are paid. A chart shows what's left of every paycheck for the next 12 months:
+green for what's free, red for what's short, and a grey cap for what everyday spending takes.
+Click a column to see its cycle. `v` leaves everyday spending out, and `p` picks which incomes
+are paydays (your paycheck is; a refund isn't, though its money counts in the cycle it lands in).
 
 <p align="center">
-  <img src="docs/paydays.svg" width="860" alt="The Paydays view on the pay cycle from Fri Oct 2 to Thu Oct 15, in 8 days: $1,606.24 free to spend or save after bills and everyday spending, from the +$2,650.00 Paycheck, less −$693.76 of bills (5 bills, the Car loan the biggest) and −$350.00 of everyday spending for 14 days at $175/week, or $1,956.24 not counting everyday spending. Below, every pay cycle for the next 12 months with its bills and what's left, green where the paycheck covers them and red where it falls short, as in the cycles that pay the rent; beside it, the cycle's paycheck and bills with what's left of the paycheck after each.">
+  <img src="docs/paydays.svg" width="860" alt="The Paydays view on the pay cycle from Fri Oct 2 to Thu Oct 15, in 8 days: $1,606.24 free to spend or save after bills and everyday spending, from the +$2,650.00 Paycheck, less −$693.76 of bills (5 bills, the Car loan the biggest) and −$350.00 of everyday spending for 14 days at $175/week, or $1,956.24 not counting everyday spending. Under it, a chart of what's left of each paycheck for the next 12 months, a column per pay cycle: green columns rising from zero with a grey cap for everyday spending, alternating with short red ones hanging below zero in the cycles that pay the rent, the Oct 2 column lit and marked on the axis. Below, every pay cycle with its bills and what's left, green where the paycheck covers them and red where it falls short; beside it, the cycle's paycheck and bills with what's left of the paycheck after each.">
 </p>
 
 **Calendar** (`3`) lays a month out day by day: what lands on each day (paychecks in green, debt

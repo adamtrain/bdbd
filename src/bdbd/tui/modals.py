@@ -282,7 +282,8 @@ READING = [
      "projection. Change it in settings (,)."),
     ("Lowest", "The lowest end-of-day balance ahead: the day to watch."),
     ("Pay cycle", "From a payday to the day before the next one. What's free to spend or save "
-     "is the paycheck less the cycle's bills and everyday spending."),
+     "is the paycheck, and any other money in during the cycle, less its bills and everyday "
+     "spending."),
     ("◆", "A debt payment. Its interest and principal split comes from the loan's own terms."),
     ("→Mon", "This flow's weekend dates move to Monday, the way an ACH pull does (→Fri: to "
      "Friday)."),

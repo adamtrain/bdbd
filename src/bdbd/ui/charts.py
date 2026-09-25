@@ -1,7 +1,10 @@
-"""Terminal charts: balance columns, a date strip and a payoff timeline."""
+"""Terminal charts: balance columns, a date strip, a payoff timeline and what's left of each
+paycheck."""
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -262,3 +265,169 @@ def _marked_axis(
         line.append(ch, style=style)
     line.rstrip()
     return line
+
+
+# ── What's left of each paycheck ──────────────────────────────────────────────
+
+EVERYDAY = "#8a90a6"  # the grey of what the everyday spending allowance takes
+_MAX_BAR = 8  # cells: a handful of pay cycles still get slim columns
+
+
+@dataclass(frozen=True)
+class PayBar:
+    """One pay cycle in `pay_bars`."""
+
+    day: date  # its payday
+    cents: int  # what's left of the paycheck: up from zero, or down when it falls short
+    cap: int = 0  # what the everyday allowance takes out of it: a grey cap over what's left
+
+
+@dataclass(frozen=True)
+class _PayLayout:
+    labels: dict[int, str]  # row (0 is the bottom) -> its axis label
+    label_w: int
+    cells: int  # the plot's width
+    columns: list[tuple[int, int, int]]  # first cell, width, the bar drawn there
+    groups: list[list[int]]  # the bars each column stands for (several when they don't fit)
+    zero: int  # the zero line, in eighths from the bottom (always between two rows)
+    scale: float  # eighths a cent
+
+
+def _pay_layout(bars: Sequence[PayBar], width: int, height: int) -> _PayLayout:
+    hi = max((max(b.cents + b.cap, b.cents, 0) for b in bars), default=0)
+    lo = min((min(b.cents, 0) for b in bars), default=0)
+    if hi == lo:
+        hi = 100  # all zero: a dollar of room
+    # the rows above the zero line and below it, in proportion; each side keeps one
+    above = height if lo == 0 else 0 if hi == 0 else round(height * hi / (hi - lo))
+    if lo < 0 < hi:
+        above = min(height - 1, max(1, above))
+    below = height - above
+    scale = min(above * 8 / hi if hi else math.inf, below * 8 / -lo if lo else math.inf)
+    labels = {height - 1: compact(hi), 0: compact(lo)}
+    if lo < 0 < hi:
+        labels[below] = compact(0)  # on the row the columns rise from
+    label_w = max(len(s) for s in labels.values())
+    cells = max(8, width - label_w - 2)
+    n = len(bars)
+    if n <= cells:
+        w = max(1, min(_MAX_BAR, cells // n - 1))
+        groups = [[i] for i in range(n)]
+        starts = [i * cells // n for i in range(n)]
+    else:  # more cycles than cells: a column stands for a few, and shows the tightest
+        w = 1
+        firsts = [c * n // cells for c in range(cells)]
+        groups = [list(range(a, max(a + 1, (c + 1) * n // cells))) for c, a in enumerate(firsts)]
+        starts = list(range(cells))
+    columns = [
+        (start, w, min(group, key=lambda i: bars[i].cents))
+        for start, group in zip(starts, groups, strict=True)
+    ]
+    return _PayLayout(labels, label_w, cells, columns, groups, below * 8, scale)
+
+
+def _cell(eighths: list[str | None]) -> tuple[str, str]:
+    """A cell's eighths (the bottom first) as a glyph and a style: one color, or the two that
+    fit best, split at an eighth."""
+    first = eighths[0]
+    if all(e == first for e in eighths):
+        return ("█", first) if first else (" ", "")
+    best: tuple[int, int, str | None, str | None] | None = None
+    for k in range(1, 8):
+        low = Counter(eighths[:k]).most_common(1)[0][0]
+        high = Counter(eighths[k:]).most_common(1)[0][0]
+        misses = sum(e != low for e in eighths[:k]) + sum(e != high for e in eighths[k:])
+        if best is None or misses < best[0]:
+            best = (misses, k, low, high)
+    assert best is not None
+    _, k, low, high = best
+    if low == high:
+        return ("█", low) if low else (" ", "")
+    if low is None:  # color at the top of the cell: draw the gap under it, reversed
+        return _BLOCKS[k], f"reverse {high}"
+    if high is None:
+        return _BLOCKS[k], low
+    return _BLOCKS[k], f"{low} on {high}"
+
+
+def pay_bars(
+    bars: Sequence[PayBar], width: int, height: int = 6, *, selected: date | None = None
+) -> list[Text]:
+    """What's left of each paycheck: a column per pay cycle around a zero line.
+
+    Green rises for what's free to spend or save and red falls for what's short; a grey cap on
+    top is what the everyday spending allowance takes (without it, that would be free too).
+    Every column is muted but the `selected` cycle's, which the axis labels ('▲ Oct 2'). When
+    the cycles outnumber the cells, a column stands for a few and shows the tightest.
+    """
+    if not bars:
+        return []
+    layout = _pay_layout(bars, width, height)
+    zero, scale = layout.zero, layout.scale
+
+    def level(cents: int) -> int:
+        eighths = round(cents * scale)
+        if cents and not eighths:  # a cent short still shows
+            eighths = 1 if cents > 0 else -1
+        return zero + eighths
+
+    marked = next((i for i, b in enumerate(bars) if b.day == selected), None)
+    plot: list[tuple[int, int, list[tuple[int, int, str]]]] = []
+    lit: list[int] = []
+    for (start, w, i), group in zip(layout.columns, layout.groups, strict=True):
+        bar = bars[i]
+        on = marked in group
+        color = GREEN if bar.cents >= 0 else RED
+        segments = []
+        left, top = max(bar.cents, 0), max(bar.cents + bar.cap, 0)
+        if top > left:
+            segments.append((level(left), level(top), EVERYDAY if on else muted(EVERYDAY, 0.6)))
+        a, b = sorted((zero, level(bar.cents)))
+        segments.append((a, b, color if on else muted(color, 0.55)))
+        plot.append((start, w, segments))
+        if on:
+            lit += range(start, start + w)
+    lines: list[Text] = []
+    for row in range(height - 1, -1, -1):
+        base = row * 8
+        label = layout.labels.get(row, "")
+        line = Text(label.rjust(layout.label_w), style=FAINT)
+        line.append(" ┤" if label else "  ", style=FAINT)
+        at = 0
+        for start, w, segments in plot:
+            eighths: list[str | None] = [None] * 8
+            for a, b, color in segments:
+                for lv in range(max(a, base), min(b, base + 8)):
+                    eighths[lv - base] = color
+            glyph, style = _cell(eighths)
+            line.append(" " * (start - at))
+            line.append(glyph * w, style=style)
+            at = start + w
+        lines.append(line)
+    days = [b.day for b in bars]
+    ticks = _x_ticks(days, layout.cells)
+    if lit and selected is not None and marked is not None:
+        color = GREEN if bars[marked].cents >= 0 else RED
+        lines.append(_marked_axis(ticks, layout.cells, layout.label_w, lit, selected, color))
+        return lines
+    tick_line = [" "] * layout.cells
+    for t in ticks:
+        for k, ch in enumerate(t.label):
+            tick_line[t.column + k] = ch
+    lines.append(Text(" " * (layout.label_w + 2) + "".join(tick_line).rstrip(), style=FAINT))
+    return lines
+
+
+def pay_bar_at(bars: Sequence[PayBar], width: int, height: int, x: int) -> date | None:
+    """The payday of the column at cell `x` of a `pay_bars` chart as wide and tall (a gap
+    counts for the column before it), or None left of the columns."""
+    if not bars:
+        return None
+    layout = _pay_layout(bars, width, height)
+    cell = x - layout.label_w - 2
+    hit = None
+    for start, _, i in layout.columns:
+        if start > cell:
+            break
+        hit = i
+    return bars[hit].day if hit is not None else None

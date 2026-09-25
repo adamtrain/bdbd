@@ -4,7 +4,8 @@ A pay cycle runs from a payday to the day before the next one; the incomes flagg
 (your paycheck) start them. The same numbers as `bdbd paydays`: the paycheck, the bills that
 land in the cycle, the everyday spending allowance for its days, and what's left, free to
 spend or save. The headline is the selected cycle (this one, when the view opens), with and
-without everyday spending; the list is every cycle a year ahead, and beside it the cycle's
+without everyday spending; under it, a chart of what's left of every paycheck a year ahead
+(click a column to pick its cycle), then the list of those cycles, and beside it the cycle's
 items with what's left after each. Other money coming in during a cycle (a refund) counts in
 it, on its day. With a what-if on, all of it includes the what-if.
 
@@ -14,13 +15,19 @@ Keys: v with or without everyday spending · p choose your paydays · enter the 
 
 from __future__ import annotations
 
-from collections.abc import Hashable
+from collections.abc import Hashable, Sequence
+from datetime import date
 from typing import ClassVar
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.content import Content
+from textual.message import Message
+from textual.reactive import reactive
+from textual.widget import Widget
 
 from bdbd import ask
 from bdbd.core.models import Kind
@@ -40,11 +47,57 @@ from bdbd.tui.widgets import (
     bdbd,
     signed,
 )
+from bdbd.ui import charts
 from bdbd.ui.common import DEBT_MARK
 from bdbd.ui.theme import ACCENT, AMBER, DOT, FAINT, GREEN, PURPLE, RED, money, money_short, plural
 from bdbd.words import fmt_date, join, relative
 
 LIST_HEADS = ["Pay cycle", "Paycheck", "Bills", "Left"]
+
+
+class PayChart(Widget):
+    """What's left of each paycheck, a column per pay cycle (`charts.pay_bars`), the selected
+    cycle's lit. A click on a column picks its cycle; a double click opens its items."""
+
+    DEFAULT_CSS = """
+    PayChart {
+        height: 1fr;
+        text-wrap: nowrap;
+        text-overflow: clip;
+    }
+    """
+
+    class Pressed(Message):
+        """A click on a pay cycle's column (`twice` for a double click)."""
+
+        def __init__(self, day: date, twice: bool) -> None:
+            super().__init__()
+            self.day = day
+            self.twice = twice
+
+    selected: reactive[date | None] = reactive(None)
+
+    def __init__(self, *, id: str | None = None) -> None:
+        super().__init__(id=id)
+        self._bars: list[charts.PayBar] = []
+
+    def show(self, bars: Sequence[charts.PayBar]) -> None:
+        self._bars = list(bars)
+        self.refresh()
+
+    def render(self) -> Text:
+        width, height = self.content_size
+        if not self._bars or height < 3 or width < 16:
+            return Text()
+        lines = charts.pay_bars(self._bars, width, height - 1, selected=self.selected)
+        return Text("\n").join(lines)
+
+    def on_click(self, event: events.Click) -> None:
+        width, height = self.content_size
+        day = charts.pay_bar_at(self._bars, width, height - 1, event.x)
+        if day is not None:
+            event.stop()
+            self.post_message(self.Pressed(day, event.chain >= 2))
 
 
 class PaydaysView(View):
@@ -56,6 +109,7 @@ class PaydaysView(View):
     PaydaysView {
         layout: vertical;
         & #paydays-headline { height: auto; }
+        & #paydays-chart-panel { height: 9; }
         & #paydays-lower { height: 1fr; }
         & #cycles-panel { width: 1fr; height: 1fr; }
         & #cycle-panel { width: 1fr; height: 1fr; }
@@ -64,6 +118,7 @@ class PaydaysView(View):
         &.-empty > * { display: none; }
         &.-empty > #paydays-empty { display: block; }
         &.-short #paydays-headline { padding: 0 2; }
+        &.-short #paydays-chart-panel { display: none; }
         &.-narrow #paydays-lower { layout: vertical; }
         &.-narrow #cycles-panel, &.-narrow #cycle-panel { width: 1fr; }
     }
@@ -100,6 +155,7 @@ class PaydaysView(View):
 
     def compose(self) -> ComposeResult:
         yield Panel(KeyValues(id="paydays-numbers"), id="paydays-headline", variant="accent")
+        yield Panel(PayChart(id="paydays-chart"), id="paydays-chart-panel")
         with Horizontal(id="paydays-lower"):
             yield Panel(self._cycles.heads, self._cycles, id="cycles-panel")
             yield Panel(self._items, id="cycle-panel")
@@ -175,6 +231,23 @@ class PaydaysView(View):
         self.query_one("#cycles-panel", Panel).fit_title(
             "Every pay cycle", f"the next {ask.PAY_CYCLE_MONTHS} months", lens
         )
+        self._chart(pc, lens)
+
+    def _chart(self, pc: ask.PayCycles, lens: str) -> None:
+        """A column per cycle: what's left, and (counting it) what everyday spending takes."""
+        bars = [
+            charts.PayBar(c.start, self._left(c), c.everyday if self.with_everyday else 0)
+            for c in pc.cycles
+        ]
+        self.query_one("#paydays-chart", PayChart).show(bars)
+        panel = self.query_one("#paydays-chart-panel", Panel)
+        panel.fit_title("What's left of each paycheck", lens)
+        key: list[Content | str] = [" ", Content.styled("█", GREEN), " free "]
+        if any(b.cap for b in bars):
+            key += [" ", Content.styled("█", charts.EVERYDAY), " everyday "]
+        if any(b.cents < 0 for b in bars):
+            key += [" ", Content.styled("█", RED), " short "]
+        panel.set_subtitle(*key)
 
     def _selected(self) -> ask.PayCycle | None:
         pc = self._shown
@@ -188,6 +261,7 @@ class PaydaysView(View):
             return
         self._headline(c)
         self._cycle_items(c)
+        self.query_one("#paydays-chart", PayChart).selected = c.start
 
     def _headline(self, c: ask.PayCycle) -> None:
         s = self.session
@@ -306,6 +380,14 @@ class PaydaysView(View):
             bdbd(self).open_flow_card(key[1])  # a stored flow (what-if items have no card)
         else:
             self.app.bell()
+
+    def on_pay_chart_pressed(self, event: PayChart.Pressed) -> None:
+        event.stop()
+        if not self._cycles.select_key(event.day):
+            return
+        self._cycles.focus()
+        if event.twice:
+            self.action_items()
 
     def action_items(self) -> None:
         if self._items.current is None:

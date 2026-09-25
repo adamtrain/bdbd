@@ -15,8 +15,9 @@ from bdbd.tui.flow_form import FlowForm
 from bdbd.tui.forms import ChoiceField, TextField
 from bdbd.tui.modals import FlowCard, PaydaysForm
 from bdbd.tui.scenario import Change
-from bdbd.tui.views.paydays import PaydaysView
+from bdbd.tui.views.paydays import PayChart, PaydaysView
 from bdbd.tui.widgets import Panel, Row, RowList
+from bdbd.ui import charts
 from bdbd.ui.theme import MINUS, cents_of, money
 
 from .conftest import SIZE, screen_text, widget_text
@@ -95,6 +96,68 @@ async def test_v_and_a_click_leave_everyday_spending_out(make_app) -> None:
         await pilot.click(offset=(x + 2, y))  # the picker in the headline's border
         await pilot.pause()
         assert not view.with_everyday
+
+
+def _chart_text(view: PaydaysView) -> str:
+    return widget_text(view.query_one("#paydays-chart-panel"))
+
+
+def _column(chart: PayChart, day: date) -> int:
+    """Where in the chart a click lands on that cycle's column."""
+    width, height = chart.content_size
+    bars = chart._bars
+    return next(x for x in range(width) if charts.pay_bar_at(bars, width, height - 1, x) == day)
+
+
+async def test_the_chart_has_every_cycle_and_lights_the_selected_one(make_app) -> None:
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        view = await _open(app, pilot)
+        chart = view.query_one("#paydays-chart", PayChart)
+        rows = _rows(view)
+        assert [b.day for b in chart._bars] == [r.key for r in rows]
+        assert [money(b.cents) for b in chart._bars] == [_plain(r.cells[-1]) for r in rows]
+        assert all(b.cap == 35_000 for b in chart._bars)  # 14 days at $175/week
+        assert chart.selected == date(2026, 9, 18)
+        text = _chart_text(view)
+        assert "What's left of each paycheck" in text and "▲ Sep 18" in text
+        assert "free" in text and "everyday" in text and "short" in text  # the key
+        await pilot.press("down")
+        assert chart.selected == date(2026, 10, 2) and "▲ Oct 2" in _chart_text(view)
+        await pilot.press("v")  # without everyday: what's left before it, no grey caps
+        assert all(b.cap == 0 for b in chart._bars)
+        assert money(chart._bars[1].cents) == "$1,956.24"
+        assert "everyday" not in _chart_text(view)
+
+
+async def test_a_click_on_the_chart_picks_a_cycle_and_a_double_click_opens_it(make_app) -> None:
+    app = make_app()
+    async with app.run_test(size=SIZE) as pilot:
+        view = await _open(app, pilot)
+        chart = view.query_one("#paydays-chart", PayChart)
+        cycles = view.query_one("#cycles", RowList)
+        x = _column(chart, date(2026, 10, 30))
+        await pilot.click(chart, offset=(x, 1))
+        await pilot.pause()
+        assert cycles.key == date(2026, 10, 30) and cycles.has_focus
+        assert chart.selected == date(2026, 10, 30)
+        assert "Short by $415.76" in _headline(view)
+        x = _column(chart, date(2026, 11, 13))
+        await pilot.click(chart, offset=(x, 1), times=2)
+        await pilot.pause()
+        assert cycles.key == date(2026, 11, 13)
+        assert view.query_one("#cycle-items", RowList).has_focus  # its items
+
+
+async def test_the_chart_makes_way_on_a_short_screen(make_app) -> None:
+    app = make_app()
+    async with app.run_test(size=(120, 30)) as pilot:
+        view = await _open(app, pilot)
+        assert not view.query_one("#paydays-chart-panel").display
+        assert "What's left of each paycheck" not in screen_text(app)
+        await pilot.resize_terminal(120, 36)
+        await pilot.pause()
+        assert view.query_one("#paydays-chart-panel").display
 
 
 async def test_enter_shows_a_cycles_items_and_opens_their_cards(make_app) -> None:
