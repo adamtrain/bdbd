@@ -1,0 +1,58 @@
+[project]
+name = "bdbd"
+version = "0.1.0"
+description = "A beautiful budget in your terminal: incomes, bills and debts, projected day by day."
+readme = "README.md"
+license = "CC0-1.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Adam Train", email = "adam@adametrain.com" }
+]
+requires-python = ">=3.13"
+keywords = ["budget", "cash-flow", "personal-finance", "debt", "amortization", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "python-dateutil>=2.9.0.post0",
+    "rich>=15.0.0",
+    "typer>=0.27.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/adamtrain/bdbd"
+Repository = "https://github.com/adamtrain/bdbd"
+Issues = "https://github.com/adamtrain/bdbd/issues"
+
+[project.scripts]
+bdbd = "bdbd.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.15,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+    "ty>=0.0.84",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "C4", "PTH"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/bdbd/core/migrations.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

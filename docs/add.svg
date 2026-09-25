@@ -1,0 +1,91 @@
+<svg class="rich-terminal" viewBox="0 0 1116 245.2" xmlns="http://www.w3.org/2000/svg">
+    <!-- Generated with Rich https://www.textualize.io -->
+    <style>
+
+    @font-face {
+        font-family: "Fira Code";
+        src: local("FiraCode-Regular"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Regular.woff2") format("woff2"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Regular.woff") format("woff");
+        font-style: normal;
+        font-weight: 400;
+    }
+    @font-face {
+        font-family: "Fira Code";
+        src: local("FiraCode-Bold"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Bold.woff2") format("woff2"),
+                url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff/FiraCode-Bold.woff") format("woff");
+        font-style: bold;
+        font-weight: 700;
+    }
+
+    .terminal-3977303745-matrix {
+        font-family: Fira Code, monospace;
+        font-size: 20px;
+        line-height: 24.4px;
+        font-variant-east-asian: full-width;
+    }
+
+    .terminal-3977303745-title {
+        font-size: 18px;
+        font-weight: bold;
+        font-family: arial;
+    }
+
+    .terminal-3977303745-r1 { fill: #7c83f7;font-weight: bold }
+.terminal-3977303745-r2 { fill: #e2e4ec;font-weight: bold }
+.terminal-3977303745-r3 { fill: #e2e4ec }
+.terminal-3977303745-r4 { fill: #1fbf8f;font-weight: bold }
+.terminal-3977303745-r5 { fill: #6c6c6c }
+.terminal-3977303745-r6 { fill: #eb9a12;font-weight: bold }
+    </style>
+
+    <defs>
+    <clipPath id="terminal-3977303745-clip-terminal">
+      <rect x="0" y="0" width="1097.0" height="194.2" />
+    </clipPath>
+    <clipPath id="terminal-3977303745-line-0">
+    <rect x="0" y="1.5" width="1098" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-3977303745-line-1">
+    <rect x="0" y="25.9" width="1098" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-3977303745-line-2">
+    <rect x="0" y="50.3" width="1098" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-3977303745-line-3">
+    <rect x="0" y="74.7" width="1098" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-3977303745-line-4">
+    <rect x="0" y="99.1" width="1098" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-3977303745-line-5">
+    <rect x="0" y="123.5" width="1098" height="24.65"/>
+            </clipPath>
+<clipPath id="terminal-3977303745-line-6">
+    <rect x="0" y="147.9" width="1098" height="24.65"/>
+            </clipPath>
+    </defs>
+
+    <rect fill="#101219" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1114" height="243.2" rx="8"/><text class="terminal-3977303745-title" fill="#e2e4ec" text-anchor="middle" x="557" y="27">bdbd</text>
+            <g transform="translate(26,22)">
+            <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
+            <circle cx="22" cy="0" r="7" fill="#febc2e"/>
+            <circle cx="44" cy="0" r="7" fill="#28c840"/>
+            </g>
+        
+    <g transform="translate(9, 41)" clip-path="url(#terminal-3977303745-clip-terminal)">
+    
+    <g class="terminal-3977303745-matrix">
+    <text class="terminal-3977303745-r1" x="0" y="20" textLength="24.4" clip-path="url(#terminal-3977303745-line-0)">❯&#160;</text><text class="terminal-3977303745-r2" x="24.4" y="20" textLength="634.4" clip-path="url(#terminal-3977303745-line-0)">bdbd&#160;add&#160;Netflix&#160;15.49&#160;monthly&#160;on&#160;the&#160;12th&#160;--tag&#160;fun</text><text class="terminal-3977303745-r3" x="1098" y="20" textLength="12.2" clip-path="url(#terminal-3977303745-line-0)">
+</text><text class="terminal-3977303745-r4" x="0" y="44.4" textLength="24.4" clip-path="url(#terminal-3977303745-line-1)">✓&#160;</text><text class="terminal-3977303745-r3" x="24.4" y="44.4" textLength="73.2" clip-path="url(#terminal-3977303745-line-1)">Added&#160;</text><text class="terminal-3977303745-r2" x="97.6" y="44.4" textLength="85.4" clip-path="url(#terminal-3977303745-line-1)">Netflix</text><text class="terminal-3977303745-r3" x="183" y="44.4" textLength="610" clip-path="url(#terminal-3977303745-line-1)">:&#160;−$15.49,&#160;monthly&#160;on&#160;the&#160;12th,&#160;next&#160;on&#160;Mon&#160;Oct&#160;12</text><text class="terminal-3977303745-r3" x="1098" y="44.4" textLength="12.2" clip-path="url(#terminal-3977303745-line-1)">
+</text><text class="terminal-3977303745-r5" x="0" y="68.8" textLength="170.8" clip-path="url(#terminal-3977303745-line-2)">&#160;&#160;Monthly&#160;net&#160;</text><text class="terminal-3977303745-r3" x="170.8" y="68.8" textLength="122" clip-path="url(#terminal-3977303745-line-2)">+$1,621.04</text><text class="terminal-3977303745-r5" x="292.8" y="68.8" textLength="36.6" clip-path="url(#terminal-3977303745-line-2)">&#160;→&#160;</text><text class="terminal-3977303745-r4" x="329.4" y="68.8" textLength="122" clip-path="url(#terminal-3977303745-line-2)">+$1,605.55</text><text class="terminal-3977303745-r3" x="1098" y="68.8" textLength="12.2" clip-path="url(#terminal-3977303745-line-2)">
+</text><text class="terminal-3977303745-r3" x="1098" y="93.2" textLength="12.2" clip-path="url(#terminal-3977303745-line-3)">
+</text><text class="terminal-3977303745-r1" x="0" y="117.6" textLength="24.4" clip-path="url(#terminal-3977303745-line-4)">❯&#160;</text><text class="terminal-3977303745-r2" x="24.4" y="117.6" textLength="207.4" clip-path="url(#terminal-3977303745-line-4)">bdbd&#160;balance&#160;3980</text><text class="terminal-3977303745-r3" x="1098" y="117.6" textLength="12.2" clip-path="url(#terminal-3977303745-line-4)">
+</text><text class="terminal-3977303745-r4" x="0" y="142" textLength="24.4" clip-path="url(#terminal-3977303745-line-5)">✓&#160;</text><text class="terminal-3977303745-r3" x="24.4" y="142" textLength="109.8" clip-path="url(#terminal-3977303745-line-5)">Recorded&#160;</text><text class="terminal-3977303745-r2" x="134.2" y="142" textLength="109.8" clip-path="url(#terminal-3977303745-line-5)">$3,980.00</text><text class="terminal-3977303745-r3" x="244" y="142" textLength="134.2" clip-path="url(#terminal-3977303745-line-5)">&#160;for&#160;today.</text><text class="terminal-3977303745-r3" x="1098" y="142" textLength="12.2" clip-path="url(#terminal-3977303745-line-5)">
+</text><text class="terminal-3977303745-r5" x="0" y="166.4" textLength="85.4" clip-path="url(#terminal-3977303745-line-6)">&#160;&#160;From&#160;</text><text class="terminal-3977303745-r5" x="85.4" y="166.4" textLength="231.8" clip-path="url(#terminal-3977303745-line-6)">$4,120.00&#160;on&#160;Sep&#160;22</text><text class="terminal-3977303745-r5" x="317.2" y="166.4" textLength="268.4" clip-path="url(#terminal-3977303745-line-6)">,&#160;the&#160;budget&#160;expected&#160;</text><text class="terminal-3977303745-r3" x="585.6" y="166.4" textLength="109.8" clip-path="url(#terminal-3977303745-line-6)">$4,070.00</text><text class="terminal-3977303745-r5" x="695.4" y="166.4" textLength="109.8" clip-path="url(#terminal-3977303745-line-6)">:&#160;you&#x27;re&#160;</text><text class="terminal-3977303745-r6" x="805.2" y="166.4" textLength="73.2" clip-path="url(#terminal-3977303745-line-6)">$90.00</text><text class="terminal-3977303745-r5" x="878.4" y="166.4" textLength="134.2" clip-path="url(#terminal-3977303745-line-6)">&#160;behind&#160;it.</text><text class="terminal-3977303745-r3" x="1098" y="166.4" textLength="12.2" clip-path="url(#terminal-3977303745-line-6)">
+</text><text class="terminal-3977303745-r5" x="0" y="190.8" textLength="427" clip-path="url(#terminal-3977303745-line-7)">&#160;&#160;Everything&#160;now&#160;starts&#160;from&#160;here.&#160;</text><text class="terminal-3977303745-r1" x="427" y="190.8" textLength="48.8" clip-path="url(#terminal-3977303745-line-7)">bdbd</text><text class="terminal-3977303745-r5" x="475.8" y="190.8" textLength="353.8" clip-path="url(#terminal-3977303745-line-7)">&#160;shows&#160;where&#160;that&#160;leaves&#160;you.</text><text class="terminal-3977303745-r3" x="1098" y="190.8" textLength="12.2" clip-path="url(#terminal-3977303745-line-7)">
+</text>
+    </g>
+    </g>
+</svg>
