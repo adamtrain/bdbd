@@ -1,4 +1,4 @@
-"""Agent mode: one JSON envelope per command, made for LLM agents and scripts.
+"""The JSON every command prints: one envelope per run, made for LLM agents and scripts.
 
     {"ok": true,  "command": "project", "data": {...}, "warnings": [...], "tidied": [...]}
     {"ok": false, "command": "add", "error": {"code": "...", "message": "...", "hint": "..."}}
@@ -15,6 +15,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from bdbd.ask import DebtRow, Picture, TagRow, coming_up
 from bdbd.budget import Recorded, Start
 from bdbd.core import balance as balances
 from bdbd.core.engine import LedgerEntry
@@ -57,11 +58,20 @@ def envelope(
     return env
 
 
-def failure(command: str, code: str, message: str, hint: str | None = None) -> dict:
+def failure(
+    command: str,
+    code: str,
+    message: str,
+    hint: str | None = None,
+    tidied: list[str] | None = None,
+) -> dict:
     error = {"code": code, "message": message}
     if hint:
         error["hint"] = re.sub(r"\[/?[a-z #0-9]*\]", "", hint)  # drop rich markup
-    return {"ok": False, "command": command, "error": error}
+    env: dict[str, Any] = {"ok": False, "command": command, "error": error}
+    if tidied:  # the tidy-up ran (and was saved) before the command failed
+        env["tidied"] = tidied
+    return env
 
 
 # ── --select ──────────────────────────────────────────────────────────────────
@@ -173,7 +183,10 @@ def flow_json(f: Flow, *, next_date: date | None = None) -> dict:
     }
 
 
-def ledger_json(e: LedgerEntry) -> dict:
+def ledger_json(e: LedgerEntry, end_of_day: dict[date, int] | None = None) -> dict:
+    """One scheduled item. `balance_after` is right after it; `end_of_day_balance` (when the
+    day's closing balances are known) is at the end of its day, after everyday spending: the
+    figure the app shows beside a day's last item, and the one low points use."""
     row = {
         "date": e.date.isoformat(),
         "name": e.name,
@@ -181,6 +194,8 @@ def ledger_json(e: LedgerEntry) -> dict:
         "amount": cents_to_str(e.delta_cents),
         "balance_after": cents_to_str(e.balance_after_cents),
     }
+    if end_of_day is not None and e.date in end_of_day:
+        row["end_of_day_balance"] = cents_to_str(end_of_day[e.date])
     if e.debt is not None:
         row["debt"] = {
             "interest": cents_to_str(e.debt.interest_cents),
@@ -223,3 +238,72 @@ def recorded_json(r: Recorded) -> dict:
             else None
         ),
     }
+
+
+def debts_json(rows: list[DebtRow]) -> dict:
+    done = [r.paid_off_on for r in rows]
+    return {
+        "debts": [
+            {
+                "flow": r.key,
+                "name": r.name,
+                "balance": cents_to_str(r.balance),
+                "annual_rate": rate_to_str(r.rate),
+                "payment": cents_to_str(r.payment),
+                "monthly": cents_to_str(r.monthly),
+                "paid_off_on": r.paid_off_on.isoformat() if r.paid_off_on else None,
+                "interest_remaining": (
+                    cents_to_str(r.interest) if r.interest is not None else None
+                ),
+                "tags": list(r.tags),
+            }
+            for r in rows
+        ],
+        "total_owed": cents_to_str(sum(r.balance for r in rows)),
+        "monthly_payments": cents_to_str(sum(r.monthly for r in rows)),
+        "interest_remaining": cents_to_str(sum(r.interest or 0 for r in rows)),
+        "debt_free_on": (
+            max(d for d in done if d is not None).isoformat() if rows and all(done) else None
+        ),
+    }
+
+
+def overview_json(p: Picture, today: date) -> dict:
+    """`bdbd overview`: the same numbers the app's overview shows."""
+    lo = p.low_point
+    return {
+        "today": today.isoformat(),
+        "balance": start_json(p.start),
+        "spare": p.spare,
+        "spare_balance": p.spare["spare_balance"] if p.spare else None,
+        "low_point": (
+            {
+                "date": lo[0].isoformat(),
+                "balance": cents_to_str(lo[1]),
+                "horizon_days": p.horizon_days,
+            }
+            if lo
+            else None
+        ),
+        "monthly": {
+            "income": cents_to_str(p.monthly_in),
+            "bills": cents_to_str(p.monthly_bills),
+            "everyday": cents_to_str(p.monthly_everyday),
+            "net": cents_to_str(p.monthly_net),
+        },
+        "upcoming": [ledger_json(e, dict(p.run.daily)) for e in coming_up(p, today)],
+        "debts": debts_json(p.debts),
+    }
+
+
+def tags_json(rows: list[TagRow]) -> list[dict]:
+    return [
+        {
+            "name": r.name,
+            "flows": r.flows,
+            "flow_names": r.flow_names,
+            "expense_monthly": cents_to_str(r.expense_monthly),
+            "income_monthly": cents_to_str(r.income_monthly),
+        }
+        for r in rows
+    ]

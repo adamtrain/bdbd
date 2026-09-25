@@ -5,32 +5,27 @@ from __future__ import annotations
 import os
 from decimal import ROUND_HALF_UP, Decimal
 
-from rich import box
-from rich.console import Console
-from rich.rule import Rule
 from rich.text import Text
-
-MAX_WIDTH = 110
 
 ACCENT = "#7c83f7"
 GREEN = "#1fbf8f"
 AMBER = "#eb9a12"
 RED = "#f2506e"
 PURPLE = "#a871f7"
-CYAN = "#56b6c2"
-FAINT = "grey42"
+FAINT = "#6c6c6c"  # xterm grey42; a hex color, so Textual can parse it as a base style too
 DARK = "#111111"
+
+# The app's own surfaces (it always paints its own background, so it looks the same anywhere).
+FOREGROUND = "#e2e4ec"
+SURFACE = "#151823"
+PANEL_BG = "#1b1f2c"
+BORDER = "#2c3142"
 
 MINUS = "\u2212"  # a real minus sign, as wide as "+"
 DOT = "·"
-ARROW = "→"
-PANEL_BOX = box.ROUNDED
-
-out = Console(highlight=False)
-err = Console(stderr=True, highlight=False)
-
 
 BACKGROUND = (16, 18, 25)  # what muted colors fade toward (the screenshots' background too)
+BACKGROUND_HEX = "#101219"  # the same, for the app's theme
 
 
 def muted(color: str, amount: float = 0.5) -> str:
@@ -40,10 +35,6 @@ def muted(color: str, amount: float = 0.5) -> str:
     rgb = [int(color[i : i + 2], 16) for i in (1, 3, 5)]
     mixed = [round(bg + (c - bg) * amount) for c, bg in zip(rgb, BACKGROUND, strict=True)]
     return "#" + "".join(f"{v:02x}" for v in mixed)
-
-
-def width(console: Console) -> int:
-    return min(console.width, MAX_WIDTH)
 
 
 def currency() -> str:
@@ -65,9 +56,10 @@ def money(cents: int, *, sign: bool = False, symbol: bool = True) -> str:
     return ("+" + body) if sign and cents > 0 else body
 
 
-def money_dec(value: Decimal | str, *, sign: bool = False) -> str:
-    d = Decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    return money(int(d.scaleb(2)), sign=sign)
+def money_short(cents: int, *, sign: bool = False) -> str:
+    """Money for sentences: '$13,000' when it's whole dollars, '$13,000.50' otherwise."""
+    text = money(cents, sign=sign)
+    return text.removesuffix(".00")
 
 
 def cents_of(value: Decimal | str) -> int:
@@ -114,54 +106,9 @@ def balance_color(cents: int, low: int = 0) -> str:
     return GREEN
 
 
-def amount(cents: int, *, kind: str = "expense", style: str = "") -> Text:
-    """A signed flow amount: '+$2,500.00' in green for money in, '-$120.00' for money out."""
-    if kind == "income" or (cents > 0 and kind == "in"):
-        return Text(money(abs(cents), sign=True), style=f"{GREEN} {style}".strip())
-    return Text(money(-abs(cents)), style=style)
-
-
-def badge(label: str, color: str = ACCENT) -> Text:
-    return Text(f" {label} ", style=f"bold {DARK} on {color}")
-
-
-def chip(label: str, color: str) -> Text:
-    return Text(label, style=color)
-
-
-def section(title: str) -> Rule:
-    return Rule(Text(f" {title} ", style=FAINT), align="left", style=FAINT, characters="─")
-
-
 def bar(value: int, total: int, cells: int, color: str) -> Text:
     """A share bar: '━━━━━───────'."""
     filled = 0 if total <= 0 else round(max(0, min(value, total)) * cells / total)
     if value > 0 and filled == 0:
         filled = 1
     return Text.assemble(("━" * filled, color), ("─" * (cells - filled), FAINT))
-
-
-def hint(*commands: str) -> Text:
-    """'Try bdbd add · bdbd cal' in the accent color."""
-    text = Text("Try ", style=FAINT)
-    for i, cmd in enumerate(commands):
-        if i:
-            text.append(f" {DOT} ", style=FAINT)
-        text.append(cmd, style=ACCENT)
-    return text
-
-
-def error(console: Console, message: str, *, hint: str | None = None) -> None:
-    console.print(Text.assemble(("✗ ", f"bold {RED}"), (message, "bold")))
-    if hint:
-        console.print(Text.from_markup(f"  {hint}"))
-
-
-def success(console: Console, message: Text | str) -> None:
-    text = message if isinstance(message, Text) else Text.from_markup(message)
-    console.print(Text.assemble(("✓ ", f"bold {GREEN}"), text))
-
-
-def note(console: Console, message: Text | str, glyph: str = "·") -> None:
-    text = message if isinstance(message, Text) else Text.from_markup(message)
-    console.print(Text.assemble((f"{glyph} ", FAINT), text))

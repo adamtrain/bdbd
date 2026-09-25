@@ -160,6 +160,9 @@ def parse_day(
     if not raw:
         raise CashError("a date is needed", "invalid_date")
     base = base or today
+    relative_to_today = {"today": 0, "tomorrow": 1, "yesterday": -1}
+    if (offset := relative_to_today.get(raw.lower())) is not None:
+        return today + timedelta(days=offset)  # the `today` given, not the clock's
     try:
         return parse_date_rel(raw, base)
     except CashError:

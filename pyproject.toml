@@ -1,6 +1,6 @@
 [project]
 name = "bdbd"
-version = "0.1.0"
+version = "0.2.0"
 description = "A beautiful budget in your terminal: incomes, bills and debts, projected day by day."
 readme = "README.md"
 license = "CC0-1.0"
@@ -9,7 +9,7 @@ authors = [
     { name = "Adam Train", email = "adam@adametrain.com" }
 ]
 requires-python = ">=3.13"
-keywords = ["budget", "cash-flow", "personal-finance", "debt", "amortization", "cli"]
+keywords = ["budget", "cash-flow", "personal-finance", "debt", "amortization", "cli", "tui"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "python-dateutil>=2.9.0.post0",
     "rich>=15.0.0",
+    "textual>=8.2",
     "typer>=0.27.2",
 ]
 
@@ -41,6 +42,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.0",
     "ruff>=0.16.9",
     "ty>=0.0.84",
 ]
@@ -56,3 +58,4 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "C4", "PTH"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

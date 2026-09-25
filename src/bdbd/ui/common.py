@@ -1,17 +1,19 @@
-"""Pieces several views share: flow descriptions, next dates, footers."""
+"""Small pieces the app and ask.py share: next dates, flow descriptions, wording."""
 
 from __future__ import annotations
 
+import os
+from collections.abc import Sequence
 from datetime import date, timedelta
+from pathlib import Path
 
-from rich.console import Console
 from rich.text import Text
 
-from bdbd.budget import Budget, Start
-from bdbd.core.models import Flow, Kind
+from bdbd.budget import Start
+from bdbd.core.models import Flow
 from bdbd.core.recurrence import occurrences
-from bdbd.ui.theme import ACCENT, DOT, FAINT, PURPLE, money, note
-from bdbd.words import describe, fmt_date, relative
+from bdbd.ui.theme import DOT, FAINT, money
+from bdbd.words import describe, fmt_date
 
 DEBT_MARK = "◆"
 LOOKAHEAD_DAYS = 800
@@ -54,65 +56,32 @@ def schedule_text(flow: Flow, *, weekend: bool = True) -> Text:
     return text
 
 
-def flow_name(flow: Flow, *, dim: bool = False) -> Text:
-    text = Text(flow.name, style="dim" if dim else "")
-    if flow.debt is not None:
-        text.append(f" {DEBT_MARK}", style=PURPLE)
-    return text
+def start_note(start: Start, today: date, items: Sequence = ()) -> Text:
+    """Where a projection's starting balance came from, in a few faint words.
 
-
-def signed(cents: int, kind: Kind | str) -> Text:
-    """A flow amount with its direction: +$2,650.00 (green) or -$412.37."""
-    from bdbd.ui.theme import GREEN
-
-    if str(kind) == "income":
-        return Text(money(cents, sign=True), style=GREEN)
-    return Text(money(-cents))
-
-
-def when_text(d: date | None, today: date) -> Text:
-    if d is None:
-        return Text("—", style=FAINT)
-    return Text.assemble(fmt_date(d, today, weekday=True), (f"  {relative(d, today)}", FAINT))
-
-
-def start_note(start: Start, today: date) -> Text:
-    """Where a projection's starting balance came from, in a few faint words."""
+    The balance is always before its day's scheduled items, so a balance recorded today on a
+    day with `items` (today's ledger entries) says so: 'recorded today · before today's
+    Paycheck +$2,650.00' (the number you typed may have had them in it already).
+    """
     rec = start.recorded
     if start.source == "given":
         return Text("as given", style=FAINT)
     if start.source == "recorded":
         when = "today" if start.as_of == today else fmt_date(start.as_of, today)
-        return Text(f"recorded {when}", style=FAINT)
+        text = Text(f"recorded {when}", style=FAINT)
+        due = [e for e in items if e.date == start.as_of and e.kind != "lifestyle"]
+        if start.as_of == today and len(due) == 1:
+            e = due[0]
+            text.append(f" {DOT} before today's {e.name} ", style=FAINT)
+            text.append(money(e.delta_cents, sign=True), style=FAINT)
+        elif start.as_of == today and due:
+            text.append(f" {DOT} before today's {len(due)} items", style=FAINT)
+        return text
     if start.source == "carried" and rec is not None:
         return Text(
             f"est. from {money(rec.amount_cents)} on {fmt_date(rec.as_of, today)}", style=FAINT
         )
     return Text("no balance recorded", style=FAINT)
-
-
-def footer(
-    console: Console,
-    budget: Budget,
-    *,
-    warnings: list[str] | None = None,
-    hints: tuple[str, ...] = (),
-) -> None:
-    """Warnings, what the automatic tidy-up did, and a line of suggestions."""
-    from bdbd.ui.theme import AMBER, hint
-
-    shown = False
-    for w in dict.fromkeys(warnings or []):
-        console.print(Text.assemble(("! ", f"bold {AMBER}"), (w, "")))
-        shown = True
-    for action in budget.tidied:
-        note(console, Text(f"Tidied up: {humanize(action)}", style=FAINT), glyph="↺")
-        shown = True
-    budget.tidied = []
-    if hints:
-        if shown:
-            console.print()
-        console.print(hint(*hints))
 
 
 def closing_balances(items: list, daily: list[tuple[date, int]]) -> list[int]:
@@ -141,19 +110,8 @@ def humanize(message: str) -> str:
     return s.replace(" -> ", " → ")
 
 
-def stale_warning(start: Start, today: date) -> str | None:
-    rec = start.recorded
-    if start.source == "carried" and rec is not None and (today - rec.as_of).days > 14:
-        return (
-            f"your balance was last recorded {relative(rec.as_of, today)}; "
-            "update it with `bdbd balance AMOUNT` for sharper numbers"
-        )
-    return None
-
-
-def meta(*parts: str) -> Text:
-    return Text(f" {DOT} ".join(p for p in parts if p), style=FAINT)
-
-
-def accent(text: str) -> Text:
-    return Text(text, style=f"bold {ACCENT}")
+def tilde(path: Path) -> str:
+    """A path the way people write it: the home directory as ~."""
+    home = str(Path.home())
+    text = str(path)
+    return "~" + text[len(home) :] if text == home or text.startswith(home + os.sep) else text

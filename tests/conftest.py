@@ -24,7 +24,7 @@ def fixed_today(monkeypatch):
     monkeypatch.setenv("BDBD_TODAY", TODAY.isoformat())
     monkeypatch.setenv("COLUMNS", "100")
     monkeypatch.setenv("NO_COLOR", "1")
-    for var in ("BDBD_DB", "BDBD_AGENT", "BDBD_CURRENCY"):
+    for var in ("BDBD_DB", "BDBD_CURRENCY"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -110,10 +110,10 @@ def _invoke(argv: list[str]) -> int:
 
 @pytest.fixture
 def agent(db_path, capsys) -> Run:
-    """Run bdbd in agent mode against a fresh budget; returns the parsed envelope."""
+    """Run a bdbd command against a fresh budget; returns the parsed envelope."""
 
     def run(*argv: str, ok: bool = True) -> dict:
-        code = _invoke(["--agent", "--db", str(db_path), *argv])
+        code = _invoke(["--db", str(db_path), *argv])
         out = capsys.readouterr().out
         env = json.loads(out)
         if ok:
@@ -125,18 +125,6 @@ def agent(db_path, capsys) -> Run:
         return env
 
     run("init")
-    return run
-
-
-@pytest.fixture
-def human(db_path, capsys) -> Run:
-    """Run bdbd the way a person does; returns (exit code, everything printed)."""
-
-    def run(*argv: str) -> tuple[int, str]:
-        code = _invoke(["--db", str(db_path), *argv])
-        captured = capsys.readouterr()
-        return code, captured.out + captured.err
-
     return run
 
 

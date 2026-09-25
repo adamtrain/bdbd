@@ -1,9 +1,7 @@
-"""The `bdbd` command."""
+"""The `bdbd` command: alone it opens the app; every subcommand prints one JSON envelope."""
 
 import functools
 import inspect
-import json
-import os
 import re
 import sqlite3
 import sys
@@ -16,12 +14,11 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
-from rich.markdown import Markdown
 
-from bdbd import __version__, agent, ask
+from bdbd import __version__, agent, ask, backup
 from bdbd.budget import Budget, Problem, WhatIf
 from bdbd.core import balance as balances
-from bdbd.core import db, engine, repo
+from bdbd.core import db, repo
 from bdbd.core.dates import add_months
 from bdbd.core.dates import today as today_fn
 from bdbd.core.errors import CashError
@@ -37,9 +34,7 @@ from bdbd.core.queries.spend import spend as spend_query
 from bdbd.core.queries.summary import summary as summary_query
 from bdbd.core.scenario import describe as describe_scenario
 from bdbd.core.scenario import load_scenario
-from bdbd.ui import balance as balance_view
-from bdbd.ui import dashboard, debts_view, flows_view, forecast, insights
-from bdbd.ui.theme import err, error, out, success
+from bdbd.ui.common import next_date
 from bdbd.words import SCHEDULE_EXAMPLES, parse_day, parse_schedule
 
 LOOK, CHANGE, DEBTS, ASK, DATA = "Look", "Change", "Debts", "Ask what if", "Data"
@@ -51,18 +46,12 @@ WHAT_IF = "What if… (never saved; combine freely)"
 
 @dataclass
 class State:
-    agent: bool = False
     db: str | None = None
     select: str | None = None
     tidy: bool = True
 
 
 STATE = State()
-
-
-def interactive() -> bool:
-    """Prompts only when a person is at a terminal (never in agent mode)."""
-    return not STATE.agent and sys.stdin.isatty() and sys.stdout.isatty()
 
 
 DATE_OPTIONS = {"--on", "--until", "--from", "--as-of", "--balance-as-of", "--before"}
@@ -74,10 +63,10 @@ def _merge_words(argv: list[str]) -> list[str]:
     """Let dates and schedules after an option go unquoted: `--until dec 31`, `--on next fri`,
     `--when monthly on the 15th`. The longest run of plain words that still reads as a date
     (or schedule) becomes the option's value; everything after it is left alone."""
-    today = today_fn()
 
     def valid(option: str, text: str) -> bool:
         try:
+            today = today_fn()
             if option in TEXT_OPTIONS:
                 parse_schedule(text, today=today)
             else:
@@ -109,7 +98,7 @@ def _merge_words(argv: list[str]) -> list[str]:
 
 
 def _take_globals(argv: list[str]) -> list[str]:
-    """Pull the global flags out of argv wherever they are, so `bdbd ls --agent` works too."""
+    """Pull the global flags out of argv wherever they are, so `bdbd ls --select count` works."""
     rest: list[str] = []
     it = iter(argv)
     for arg in it:
@@ -117,23 +106,20 @@ def _take_globals(argv: list[str]) -> list[str]:
             rest.append(arg)
             rest.extend(it)
             break
-        if arg == "--agent":
-            STATE.agent = True
-        elif arg == "--no-tidy":
+        if arg == "--no-tidy":
             STATE.tidy = False
         elif arg in ("--db", "--select"):
             value = next(it, None)
             if value is None:
-                rest.append(arg)
-                continue
+                example = "--select total" if arg == "--select" else "--db ~/budget.sqlite"
+                _print_json(agent.failure("app", "usage", f"{arg} needs a value, e.g. {example}"))
+                raise SystemExit(2)
             setattr(STATE, arg[2:], value)
         elif arg.startswith(("--db=", "--select=")):
             key, _, value = arg[2:].partition("=")
             setattr(STATE, key, value)
         else:
             rest.append(arg)
-    if STATE.select:
-        STATE.agent = True
     return rest
 
 
@@ -150,10 +136,6 @@ class Ctx:
     budget: Budget
     data: Any = None
     warnings: list[str] = field(default_factory=list)
-
-    @property
-    def agent(self) -> bool:
-        return STATE.agent
 
     @property
     def today(self) -> date:
@@ -174,57 +156,81 @@ def _print_json(env: dict) -> None:
     sys.stdout.flush()
 
 
-def _fail(command: str, code: str, message: str, hint: str | None = None) -> None:
-    usage = code == "usage"
-    if STATE.agent:
-        _print_json(agent.failure(command, code, message, hint))
-    else:
-        error(
-            err, message[0].upper() + message[1:] if message else "Something went wrong.", hint=hint
-        )
-    raise typer.Exit(2 if usage else 1)
+USAGE_CODES = {"usage", "no_terminal"}  # exit 2; every other failure exits 1
+
+# Commands that change the budget: a --select that misses on these must not read as a failure,
+# or following the advice to retry would make the change twice.
+CHANGES = {
+    "add", "edit", "rm", "pause", "resume", "balance", "config", "import", "tidy",
+    "tags rename", "tags rm", "debt set", "debt unset", "debt extra", "debt rate",
+    "debt payment", "debt adjust", "debt payoff", "debt drop",
+}  # fmt: skip
+
+
+def _fail(
+    command: str,
+    code: str,
+    message: str,
+    hint: str | None = None,
+    tidied: list[str] | None = None,
+) -> None:
+    _print_json(agent.failure(command, code, message, hint, tidied))
+    raise typer.Exit(2 if code in USAGE_CODES else 1)
+
+
+def _selected(command: str, data: Any, warnings: list[str]) -> Any:
+    """--select applied to `data`; a miss after a change keeps everything and warns instead."""
+    if not STATE.select:
+        return data
+    try:
+        return agent.select(data, STATE.select)
+    except CashError as exc:
+        if command not in CHANGES or exc.code != "select_not_found":
+            raise
+        warnings.append(f"{exc.message}. The change was saved; showing all of its data instead.")
+        return data
+
+
+def _selected_or_fail(command: str, data: Any) -> Any:
+    """--select for the commands that don't open a budget (init, guide)."""
+    try:
+        return agent.select(data, STATE.select) if STATE.select else data
+    except CashError as exc:
+        _fail(command, exc.code, exc.message)
 
 
 @contextmanager
 def run(command: str, *, tidy: bool | None = None) -> Iterator[Ctx]:
     budget: Budget | None = None
+
+    def tidied() -> list[str]:
+        return budget.tidied if budget is not None else []
+
     try:
         budget = Budget.open(db_path(), tidy=STATE.tidy if tidy is None else tidy)
         ctx = Ctx(command, budget)
         yield ctx
-        if STATE.agent:
-            data = ctx.data
-            if STATE.select:
-                data = agent.select(data, STATE.select)
-            _print_json(agent.envelope(command, data, ctx.warnings, budget.tidied))
-        else:
-            _print_tidied(budget)
+        data = _selected(command, ctx.data, ctx.warnings)
+        _print_json(agent.envelope(command, data, ctx.warnings, budget.tidied))
     except Problem as exc:
-        _fail(command, exc.code, exc.message, exc.hint)
+        _fail(command, exc.code, exc.message, exc.hint, tidied())
     except CashError as exc:
         hint = _hint_for(exc.code)
         if exc.code == "unknown_term" and re.match(r"^'\d+'", exc.message):
             hint = 'Put a date with a space in quotes, e.g. [bold]--until "dec 31"[/].'
-        _fail(command, exc.code, exc.message, hint)
+        _fail(command, exc.code, exc.message, hint, tidied())
     except sqlite3.IntegrityError as exc:
-        _fail(command, "integrity", str(exc))
+        _fail(command, "integrity", str(exc), tidied=tidied())
+    except sqlite3.DatabaseError as exc:  # locked by another program, read-only, not sqlite
+        _fail(command, *db.problem(exc, db_path()), tidied=tidied())
+    except OSError as exc:
+        _fail(command, "file_error", f"{exc.strerror or exc}: {exc.filename or db_path()}")
     except KeyboardInterrupt:
-        err.print("[dim]Cancelled.[/]")
+        sys.stderr.write("Cancelled.\n")
         raise typer.Exit(130) from None
     finally:
         if budget is not None:
             budget.close()
-
-
-def _print_tidied(budget: Budget) -> None:
-    from rich.text import Text
-
-    from bdbd.ui.common import humanize
-    from bdbd.ui.theme import FAINT, note
-
-    for action in budget.tidied:
-        note(out, Text(f"Tidied up: {humanize(action)}", style=FAINT), glyph="↺")
-    budget.tidied = []
 
 
 def _hint_for(code: str) -> str | None:
@@ -286,9 +292,7 @@ WeeklyOpt = Annotated[
         show_default=False,
     ),
 ]
-VerboseOpt = Annotated[
-    bool, typer.Option("--verbose", help="Agent mode: include bulky sections too.")
-]
+VerboseOpt = Annotated[bool, typer.Option("--verbose", help="Include bulky sections too.")]
 
 
 def _months(default: int) -> Any:
@@ -409,25 +413,39 @@ app = typer.Typer(
 
 def _version(value: bool) -> None:
     if value:
-        if STATE.agent:
-            _print_json(agent.envelope("version", {"version": __version__}))
-        else:
-            out.print(f"bdbd {__version__}")
+        sys.stdout.write(f"bdbd {__version__}\n")
         raise typer.Exit()
 
 
 EPILOG = (
     "[bold]Examples[/]\n\n"
-    "  [cyan]bdbd[/]                                  where you stand\n"
+    "  [cyan]bdbd[/]                                  open the app\n"
+    "  [cyan]bdbd overview[/]                         where you stand\n"
     "  [cyan]bdbd balance 3200[/]                     tell it what's in your account\n"
     "  [cyan]bdbd add Netflix 15.49 monthly on the 12th[/]\n"
-    "  [cyan]bdbd cal[/]                              this month, day by day\n"
-    "  [cyan]bdbd project --until eoy[/]              the balance through December\n"
+    "  [cyan]bdbd project --until dec 12[/]           the balance on Dec 12, and what's spare\n"
+    "  [cyan]bdbd spend car --select total[/]         what the car costs over the next month\n"
     "  [cyan]bdbd plan --extra 300[/]                 how fast the debts could go\n\n"
     "Reads the budget at [bold]--db[/], else [bold]$BDBD_DB[/], else "
-    "[bold]~/.config/bdbd/budget.sqlite[/]. For LLM agents: [bold]--agent[/] (JSON), "
-    "then [bold]bdbd --agent guide[/]."
+    "[bold]~/.config/bdbd/budget.sqlite[/]. Every field of every command: [bold]bdbd guide[/]."
 )
+
+
+def _at_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _open_app() -> None:
+    """No command: open the app, which needs a person at a terminal."""
+    if STATE.select:
+        hint = "Name one, e.g. [bold]bdbd overview --select spare_balance[/]."
+        _fail("app", "usage", "--select needs a command", hint)
+    if not _at_terminal():
+        hint = "For the overview as JSON, run bdbd overview."
+        _fail("app", "no_terminal", "bdbd opens an app, which needs a terminal", hint)
+    from bdbd.tui import run as run_app  # only here, so the JSON commands stay quick
+
+    run_app(db_path(), tidy=STATE.tidy)
 
 
 @app.callback(invoke_without_command=True, epilog=EPILOG)
@@ -437,15 +455,12 @@ def main_callback(
         str | None,
         typer.Option("--db", metavar="PATH", help="The budget file to use.", show_default=False),
     ] = None,
-    agent_: Annotated[
-        bool, typer.Option("--agent", help="Print one JSON envelope for LLM agents and scripts.")
-    ] = False,
     select_: Annotated[
         str | None,
         typer.Option(
             "--select",
             metavar="PATHS",
-            help="Agent mode: only these comma-separated paths of data.",
+            help="Only these comma-separated paths of data.",
             show_default=False,
         ),
     ] = None,
@@ -459,34 +474,39 @@ def main_callback(
 ) -> None:
     """A beautiful budget in your terminal: incomes, bills and debts, projected day by day.
 
-    With no command, [bold]bdbd[/] shows where you stand: your balance, the money that's
-    spare until payday, what's coming up and how your debts are going.
+    [bold]bdbd[/] alone opens the app.
+    Every command below prints one JSON envelope, for LLM agents and scripts.
+    [bold]bdbd guide[/] describes each one and its fields.
     """
     if db_:
         STATE.db = db_
-    if agent_:
-        STATE.agent = True
     if select_:
-        STATE.select, STATE.agent = select_, True
+        STATE.select = select_
     if no_tidy:
         STATE.tidy = False
     if ctx.invoked_subcommand is None:
-        with run("overview") as c:
-            if c.agent:
-                c.emit(*dashboard.agent_data(c.budget))
-            else:
-                dashboard.render(out, c.budget)
+        _open_app()
 
 
 # ── Look ──────────────────────────────────────────────────────────────────────
 
 
-@app.command("balance", rich_help_panel=LOOK)
+@app.command("overview", rich_help_panel=LOOK)
+def overview_cmd() -> None:
+    """Where you stand: balance, spare until payday, the low point, what's coming, debts."""
+    with run("overview") as c:
+        p = ask.overview(c.budget)
+        never = ask.never_paid_warning(p.debts)
+        c.emit(agent.overview_json(p, c.today), [*p.warnings, *([never] if never else [])])
+
+
+@app.command("balance", rich_help_panel=LOOK, context_settings={"ignore_unknown_options": True})
 def balance_cmd(
     amount: Annotated[
         str | None,
         typer.Argument(
-            help="What's in your account, e.g. 3200. Leave it out to see the balance bdbd has.",
+            help="What's in your account, e.g. 3200 (or -120 when overdrawn). Leave it out to "
+            "see the balance bdbd has.",
             show_default=False,
         ),
     ] = None,
@@ -504,7 +524,7 @@ def balance_cmd(
         typer.Option(
             "--posted/--pending",
             help="Whether that day's scheduled items are already in AMOUNT "
-            "(asked when it matters; --pending otherwise).",
+            "(default --pending, with a warning when that day has any).",
             show_default=False,
         ),
     ] = None,
@@ -520,30 +540,24 @@ def balance_cmd(
     with run("balance") as c:
         b = c.budget
         if forget:
-            n = balances.forget(b.conn)
-            if c.agent:
-                c.emit({"forgot": n})
-            else:
-                success(out, f"Forgot {n} recorded balance{'s' if n != 1 else ''}.")
+            c.emit({"forgot": balances.forget(b.conn)})
             return
         if amount is None:
             start = b.start(c.today)
             rec = b.recorded()
             since = []
+            end_of_day: dict[date, int] = {}
             if rec is not None and rec.as_of < c.today:
                 w = ask.window(b, c.today - timedelta(days=1), as_of=rec.as_of)
-                since = w.items
-            if c.agent:
-                c.emit(
-                    {
-                        "today": agent.start_json(start),
-                        "recorded": agent.balance_json(rec),
-                        "since_recorded": [agent.ledger_json(e) for e in since],
-                        "history": [agent.balance_json(h) for h in balances.history(b.conn)],
-                    }
-                )
-            else:
-                balance_view.render_show(out, b, start, since)
+                since, end_of_day = w.items, dict(w.run.daily)
+            c.emit(
+                {
+                    "today": agent.start_json(start),
+                    "recorded": agent.balance_json(rec),
+                    "since_recorded": [agent.ledger_json(e, end_of_day) for e in since],
+                    "history": [agent.balance_json(h) for h in balances.history(b.conn)],
+                }
+            )
             return
         cents = _money(amount, "the balance", negative=True)
         assert cents is not None
@@ -551,20 +565,14 @@ def balance_cmd(
         items = b.items_on(day)
         warnings = []
         if posted is None and items:
-            if interactive():
-                posted = balance_view.ask_posted(out, b, day, items)
-            else:
-                posted = False
-                listed = ", ".join(f"{e.name} {cents_to_str(e.delta_cents)}" for e in items)
-                warnings.append(
-                    f"{day.isoformat()} has scheduled items ({listed}); assumed they are not in "
-                    "the balance yet. Pass --posted if they are."
-                )
+            posted = False
+            listed = ", ".join(f"{e.name} {cents_to_str(e.delta_cents)}" for e in items)
+            warnings.append(
+                f"{day.isoformat()} has scheduled items ({listed}); assumed they are not in "
+                "the balance yet. Pass --posted if they are."
+            )
         rec = b.record_balance(cents, day, posted=bool(posted))
-        if c.agent:
-            c.emit(agent.recorded_json(rec), warnings)
-        else:
-            balance_view.render_recorded(out, b, rec)
+        c.emit(agent.recorded_json(rec), warnings)
 
 
 @app.command("upcoming", rich_help_panel=LOOK)
@@ -595,21 +603,18 @@ def upcoming_cmd(
             given=_money(balance, "--balance", negative=True),
             weekly=_money(weekly_spend, "--weekly-spend"),
         )
-        if c.agent:
-            c.emit(
-                {
-                    "from": c.today.isoformat(),
-                    "until": end.isoformat(),
-                    "opening": agent.start_json(w.start),
-                    "weekly_spend": cents_to_str(w.weekly),
-                    "items": [agent.ledger_json(e) for e in w.items],
-                    "lifestyle_total": cents_to_str(w.lifestyle_total),
-                    "ending_balance": cents_to_str(w.run.ending_balance_cents),
-                },
-                w.run.warnings,
-            )
-        else:
-            forecast.render_upcoming(out, b, w, end)
+        c.emit(
+            {
+                "from": c.today.isoformat(),
+                "until": end.isoformat(),
+                "opening": agent.start_json(w.start),
+                "weekly_spend": cents_to_str(w.weekly),
+                "items": [agent.ledger_json(e, dict(w.run.daily)) for e in w.items],
+                "lifestyle_total": cents_to_str(w.lifestyle_total),
+                "ending_balance": cents_to_str(w.run.ending_balance_cents),
+            },
+            w.run.warnings,
+        )
 
 
 @app.command("cal", rich_help_panel=LOOK)
@@ -628,27 +633,23 @@ def cal_cmd(
         days, start = ask.calendar(
             c.budget, first, given=_money(balance, "--balance", negative=True)
         )
-        if c.agent:
-            c.emit(
-                {
-                    "month": first.strftime("%Y-%m"),
-                    "opening": agent.start_json(start),
-                    "days": [
-                        {
-                            "date": d.date.isoformat(),
-                            "items": [
-                                {"name": n, "amount": cents_to_str(a), "kind": k}
-                                for n, a, k in d.items
-                            ],
-                            "net": cents_to_str(d.net),
-                            "balance": cents_to_str(d.balance) if d.balance is not None else None,
-                        }
-                        for d in days
-                    ],
-                }
-            )
-        else:
-            forecast.render_calendar(out, c.budget, first, days, start)
+        c.emit(
+            {
+                "month": first.strftime("%Y-%m"),
+                "opening": agent.start_json(start),
+                "days": [
+                    {
+                        "date": d.date.isoformat(),
+                        "items": [
+                            {"name": n, "amount": cents_to_str(a), "kind": k} for n, a, k in d.items
+                        ],
+                        "net": cents_to_str(d.net),
+                        "balance": cents_to_str(d.balance) if d.balance is not None else None,
+                    }
+                    for d in days
+                ],
+            }
+        )
 
 
 @app.command("ls", rich_help_panel=LOOK)
@@ -667,15 +668,12 @@ def ls_cmd(
     with run("ls") as c:
         kind = Kind.INCOME if income and not expenses else Kind.EXPENSE if expenses else None
         lst = ask.listing(c.budget, kind=kind, tag=tag, include_inactive=all_)
-        if c.agent:
-            rows = []
-            for f in lst.flows:
-                row = agent.flow_json(f, next_date=lst.next[f.id])
-                row["monthly"] = cents_to_str(lst.monthly[f.id])
-                rows.append(row)
-            c.emit({"flows": rows, "count": len(rows)})
-        else:
-            flows_view.render_list(out, c.budget, lst, tag=tag)
+        rows = []
+        for f in lst.flows:
+            row = agent.flow_json(f, next_date=lst.next[f.id])
+            row["monthly"] = cents_to_str(lst.monthly[f.id])
+            rows.append(row)
+        c.emit({"flows": rows, "count": len(rows)})
 
 
 @app.command("show", rich_help_panel=LOOK)
@@ -686,25 +684,22 @@ def show_cmd(
     with run("show") as c:
         f = c.budget.find(flow)
         info = ask.details(c.budget, f)
-        if c.agent:
-            data = agent.flow_json(f, next_date=info.upcoming[0] if info.upcoming else None)
-            data["upcoming"] = [d.isoformat() for d in info.upcoming]
-            data["monthly"] = cents_to_str(info.monthly)
-            if info.debt:
-                d = info.debt
-                data["debt_outlook"] = {
-                    k: d[k]
-                    for k in (
-                        "balance_at_as_of",
-                        "payoff_date",
-                        "payments_remaining",
-                        "total_paid_remaining",
-                        "total_interest_remaining",
-                    )
-                }
-            c.emit(data)
-        else:
-            flows_view.render_card(out, c.budget, info)
+        data = agent.flow_json(f, next_date=info.upcoming[0] if info.upcoming else None)
+        data["upcoming"] = [d.isoformat() for d in info.upcoming]
+        data["monthly"] = cents_to_str(info.monthly)
+        if info.debt:
+            d = info.debt
+            data["debt_outlook"] = {
+                k: d[k]
+                for k in (
+                    "balance_at_as_of",
+                    "payoff_date",
+                    "payments_remaining",
+                    "total_paid_remaining",
+                    "total_interest_remaining",
+                )
+            }
+        c.emit(data)
 
 
 tags_app = typer.Typer(help="Your tags and the flows carrying each.", no_args_is_help=False)
@@ -717,11 +712,7 @@ def tags_cmd(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     with run("tags") as c:
-        rows = flows_view.tag_rows(c.budget)
-        if c.agent:
-            c.emit({"tags": rows})
-        else:
-            flows_view.render_tags(out, c.budget, rows)
+        c.emit({"tags": agent.tags_json(ask.tag_rows(c.budget))})
 
 
 @tags_app.command("rename")
@@ -729,11 +720,7 @@ def tags_rename(old: str, new: str) -> None:
     """Rename a tag everywhere."""
     with run("tags rename") as c:
         repo.rename_tag(c.budget.conn, old, new)
-        data = {"from": repo.normalize_tag(old), "to": repo.normalize_tag(new)}
-        if c.agent:
-            c.emit({"renamed": data})
-        else:
-            success(out, f"Renamed tag [bold]{data['from']}[/] to [bold]{data['to']}[/].")
+        c.emit({"renamed": {"from": repo.normalize_tag(old), "to": repo.normalize_tag(new)}})
 
 
 @tags_app.command("rm")
@@ -741,10 +728,7 @@ def tags_rm(tag: str) -> None:
     """Take a tag off every flow."""
     with run("tags rm") as c:
         repo.remove_tag(c.budget.conn, tag)
-        if c.agent:
-            c.emit({"removed": repo.normalize_tag(tag)})
-        else:
-            success(out, f"Removed tag [bold]{repo.normalize_tag(tag)}[/] from every flow.")
+        c.emit({"removed": repo.normalize_tag(tag)})
 
 
 # ── Change ────────────────────────────────────────────────────────────────────
@@ -774,16 +758,15 @@ def _weekend(ach: bool, weekend: str | None) -> Weekend | None:
 
 @app.command("add", rich_help_panel=CHANGE)
 def add_cmd(
-    name: Annotated[
-        str | None, typer.Argument(help="What it is, e.g. Netflix.", show_default=False)
-    ] = None,
+    name: Annotated[str, typer.Argument(help="What it is, e.g. Netflix.", show_default=False)],
     amount: Annotated[
-        str | None, typer.Argument(help="How much each time, e.g. 15.49.", show_default=False)
-    ] = None,
+        str, typer.Argument(help="How much each time, e.g. 15.49.", show_default=False)
+    ],
     when: Annotated[
         list[str] | None,
         typer.Argument(
-            help="When, in words: monthly on the 12th, every 2 weeks on fri, once on oct 15.",
+            help="When, in words: monthly on the 12th, every 2 weeks on fri, once on oct 15 "
+            "(required, here or as --when).",
             show_default=False,
         ),
     ] = None,
@@ -837,8 +820,6 @@ def add_cmd(
     [bold]bdbd add Rent 1950 monthly on the 1st --ach[/]
     [bold]bdbd add Paycheck 2650 every 2 weeks on fri from sep 18 --income[/]
     [bold]bdbd add Dentist 240 once on oct 28[/]
-
-    Leave things out at a terminal and bdbd asks for them.
     """
     with run("add") as c:
         b = c.budget
@@ -848,9 +829,6 @@ def add_cmd(
         is_income = income or kind == "income"
         tags = _tags(tag)
         wk = _weekend(ach, weekend)
-        if interactive() and (name is None or amount is None or not text):
-            answers = flows_view.ask_new_flow(out, b, name, amount, text, is_income, tags, wk)
-            name, amount, text, is_income, tags, wk = answers
         _need(name, "a name", "add")
         _need(amount, "an amount", "add")
         _need(text, "a schedule (like 'monthly on the 1st')", "add")
@@ -859,7 +837,6 @@ def add_cmd(
         sched = parse_schedule(phrase, today=c.today)
         cents = _money(amount)
         assert cents is not None
-        before = ask.monthly_net(b)
         f = repo.add_flow(
             b.conn,
             name=name,
@@ -873,12 +850,7 @@ def add_cmd(
             active=not paused,
             weekend=wk or Weekend.NONE,
         )
-        if c.agent:
-            from bdbd.ui.common import next_date
-
-            c.emit(agent.flow_json(f, next_date=next_date(f, c.today)))
-        else:
-            flows_view.render_added(out, b, f, before, ask.monthly_net(b))
+        c.emit(agent.flow_json(f, next_date=next_date(f, c.today)))
 
 
 @app.command("edit", rich_help_panel=CHANGE)
@@ -932,8 +904,7 @@ def edit_cmd(
     """Change a flow: its name, amount, schedule, tags or weekend rule."""
     with run("edit") as c:
         b = c.budget
-        before = b.find(flow)
-        fid = int(before.id)
+        fid = int(b.find(flow).id)
         kw: dict[str, Any] = {}
         if name is not None:
             kw["name"] = name
@@ -962,7 +933,7 @@ def edit_cmd(
             kw["notes"] = notes or None
         b.conn.execute("BEGIN")
         try:
-            after = repo.update_flow(b.conn, fid, **kw)
+            repo.update_flow(b.conn, fid, **kw)
             if tags is not None:
                 repo.set_flow_tags(b.conn, fid, _tags([tags]))
             if tag:
@@ -975,41 +946,24 @@ def edit_cmd(
             b.conn.execute("ROLLBACK")
             raise
         after = repo.get_flow(b.conn, fid)
-        if c.agent:
-            from bdbd.ui.common import next_date
-
-            c.emit(agent.flow_json(after, next_date=next_date(after, c.today)))
-        else:
-            flows_view.render_edited(out, b, before, after)
+        c.emit(agent.flow_json(after, next_date=next_date(after, c.today)))
 
 
 @app.command("rm", rich_help_panel=CHANGE)
 def rm_cmd(
     flow: Annotated[str, typer.Argument(help="The flow's name (or id).", show_default=False)],
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Don't ask first.")] = False,
 ) -> None:
     """Delete a flow (and its debt record, if it has one)."""
     with run("rm") as c:
         f = c.budget.find(flow)
-        if interactive() and not yes and not flows_view.confirm_remove(out, f):
-            out.print("[dim]Kept it.[/]")
-            return
         repo.remove_flow(c.budget.conn, int(f.id))
-        if c.agent:
-            c.emit({"removed": agent.flow_json(f)})
-        else:
-            success(out, f"Removed [bold]{f.name}[/].")
+        c.emit({"removed": agent.flow_json(f)})
 
 
 def _set_active(command: str, flow: str, active: bool) -> None:
     with run(command) as c:
         f = c.budget.find(flow)
-        after = repo.update_flow(c.budget.conn, int(f.id), active=active)
-        if c.agent:
-            c.emit(agent.flow_json(after))
-        else:
-            verb = "Resumed" if active else "Paused"
-            success(out, f"{verb} [bold]{after.name}[/].")
+        c.emit(agent.flow_json(repo.update_flow(c.budget.conn, int(f.id), active=active)))
 
 
 @app.command("pause", rich_help_panel=CHANGE)
@@ -1030,10 +984,8 @@ def resume_cmd(flow: Annotated[str, typer.Argument(help="The flow's name (or id)
 def _debts_overview() -> None:
     with run("debts") as c:
         rows = ask.debts(c.budget)
-        if c.agent:
-            c.emit(debts_view.agent_data(rows))
-        else:
-            debts_view.render_overview(out, c.budget, rows)
+        never = ask.never_paid_warning(rows)
+        c.emit(agent.debts_json(rows), [never] if never else [])
 
 
 @app.command("debts", rich_help_panel=DEBTS)
@@ -1067,7 +1019,7 @@ def debt_set(
         typer.Option(
             "--balance",
             metavar="AMOUNT",
-            help="What's owed, right after the payment due on --as-of.",
+            help="What's owed, right after the payment due on --as-of (required).",
             show_default=False,
         ),
     ] = None,
@@ -1084,7 +1036,10 @@ def debt_set(
     rate: Annotated[
         str | None,
         typer.Option(
-            "--rate", metavar="RATE", help="Annual rate: 6.49% or 0.0649.", show_default=False
+            "--rate",
+            metavar="RATE",
+            help="Annual rate: 6.49% or 0.0649 (required).",
+            show_default=False,
         ),
     ] = None,
     compounding: Annotated[
@@ -1092,7 +1047,7 @@ def debt_set(
         typer.Option(
             "--compounding",
             metavar="HOW",
-            help="simple (most car and student loans), daily (cards), monthly "
+            help="Required: simple (most car and student loans), daily (cards), monthly "
             "(mortgages) or continuous.",
             show_default=False,
         ),
@@ -1143,8 +1098,6 @@ def debt_set(
     with run("debt set") as c:
         b = c.budget
         f = b.find(flow)
-        if interactive() and (balance is None or rate is None or compounding is None):
-            balance, rate, compounding = debts_view.ask_terms(out, f, balance, rate, compounding)
         _need(balance, "--balance", "debt set")
         _need(rate, "--rate", "debt set")
         _need(compounding, "--compounding", "debt set")
@@ -1170,11 +1123,7 @@ def debt_set(
             original_principal_cents=_money(original_principal, "--original-principal"),
             posting_day=posting_day,
         )
-        after = repo.get_flow(b.conn, int(f.id))
-        if c.agent:
-            c.emit(agent.flow_json(after))
-        else:
-            debts_view.render_set(out, b, after)
+        c.emit(agent.flow_json(repo.get_flow(b.conn, int(f.id))))
 
 
 @debt_app.command("unset")
@@ -1183,14 +1132,19 @@ def debt_unset(flow: Annotated[str, typer.Argument(help="The debt's name.")]) ->
     with run("debt unset") as c:
         f = c.budget.find(flow)
         repo.unset_debt(c.budget.conn, int(f.id))
-        if c.agent:
-            c.emit(agent.flow_json(repo.get_flow(c.budget.conn, int(f.id))))
-        else:
-            success(out, f"[bold]{f.name}[/] is a plain expense again.")
+        c.emit(agent.flow_json(repo.get_flow(c.budget.conn, int(f.id))))
 
 
 def _event(
-    command: str, flow: str, type_: EventType, on: str | None, *, rate=None, cents=None, notes=None
+    command: str,
+    flow: str,
+    type_: EventType,
+    on: str | None,
+    *,
+    rate: str | None = None,
+    amount: str | None = None,
+    negative: bool = False,
+    notes: str | None = None,
 ) -> None:
     with run(command) as c:
         f = c.budget.find(flow)
@@ -1199,14 +1153,11 @@ def _event(
             int(f.id),
             type=type_,
             date=c.day(on, prefer="nearest") if on else c.today,
-            rate=rate,
-            amount_cents=cents,
+            rate=parse_rate(rate) if rate is not None else None,
+            amount_cents=_money(amount, negative=negative),
             notes=notes,
         )
-        if c.agent:
-            c.emit(agent.event_json(ev))
-        else:
-            debts_view.render_event(out, c.budget, f, ev)
+        c.emit(agent.event_json(ev))
 
 
 OnOpt = Annotated[
@@ -1224,7 +1175,7 @@ def debt_extra(
     notes: NotesOpt = None,
 ) -> None:
     """Record an extra payment (a what-if? use --extra-payment on project instead)."""
-    _event("debt extra", flow, EventType.EXTRA_PAYMENT, on, cents=_money(amount), notes=notes)
+    _event("debt extra", flow, EventType.EXTRA_PAYMENT, on, amount=amount, notes=notes)
 
 
 @debt_app.command("rate")
@@ -1235,7 +1186,7 @@ def debt_rate(
     notes: NotesOpt = None,
 ) -> None:
     """Record a new interest rate from a date."""
-    _event("debt rate", flow, EventType.RATE_CHANGE, on, rate=parse_rate(rate), notes=notes)
+    _event("debt rate", flow, EventType.RATE_CHANGE, on, rate=rate, notes=notes)
 
 
 @debt_app.command("payment")
@@ -1246,7 +1197,7 @@ def debt_payment(
     notes: NotesOpt = None,
 ) -> None:
     """Record a new regular payment from a date."""
-    _event("debt payment", flow, EventType.PAYMENT_CHANGE, on, cents=_money(amount), notes=notes)
+    _event("debt payment", flow, EventType.PAYMENT_CHANGE, on, amount=amount, notes=notes)
 
 
 @debt_app.command("adjust", context_settings={"ignore_unknown_options": True})
@@ -1257,8 +1208,10 @@ def debt_adjust(
     notes: NotesOpt = None,
 ) -> None:
     """Record a balance correction (a fee, a refund, a rounding fix)."""
-    cents = _money(amount, negative=True)
-    _event("debt adjust", flow, EventType.BALANCE_ADJUSTMENT, on, cents=cents, notes=notes)
+    _event(
+        "debt adjust", flow, EventType.BALANCE_ADJUSTMENT, on, amount=amount, negative=True,
+        notes=notes,
+    )  # fmt: skip
 
 
 @debt_app.command("payoff")
@@ -1276,10 +1229,7 @@ def debt_drop(event_id: Annotated[int, typer.Argument(help="The event's id (see 
     """Delete a recorded debt event."""
     with run("debt drop") as c:
         repo.remove_event(c.budget.conn, event_id)
-        if c.agent:
-            c.emit({"removed": event_id})
-        else:
-            success(out, f"Deleted debt event {event_id}.")
+        c.emit({"removed": event_id})
 
 
 @debt_app.command("schedule")
@@ -1292,11 +1242,11 @@ def debt_schedule_cmd(
             "--rows",
             "-n",
             metavar="N",
-            help="Show at most N payments (default 12).",
+            help="At most N payments (default every one).",
             show_default=False,
         ),
     ] = None,
-    all_rows: Annotated[bool, typer.Option("--all", "-a", help="Show every payment.")] = False,
+    all_rows: Annotated[bool, typer.Option("--all", "-a", help="Every payment.")] = False,
     as_of: AsOfOpt = None,
     until: UntilOpt = None,
     months: Months600 = None,
@@ -1320,21 +1270,16 @@ def debt_schedule_cmd(
         model = c.budget.model(
             what_if.spec(today=c.today, base=start), as_of=start, include_inactive=True
         )
-        limit = None if all_rows else (rows or (None if c.agent else 12))
         data, warnings = debt_schedule(
             model,
             f.id,
             as_of=start,
             until=end,
             solve_payment_months=solve_payment,
-            max_rows=limit,
+            max_rows=None if all_rows else (rows or None),
         )
         _scenario_block(data, model, verbose)
-        if c.agent:
-            c.emit(data, warnings)
-        else:
-            full, _ = debt_schedule(model, f.id, as_of=start, until=end)
-            debts_view.render_schedule(out, c.budget, data, full, warnings)
+        c.emit(data, warnings)
 
 
 # ── Ask ───────────────────────────────────────────────────────────────────────
@@ -1348,12 +1293,8 @@ def project_cmd(
     as_of: AsOfOpt = None,
     balance: BalanceOpt = None,
     weekly_spend: WeeklyOpt = None,
-    daily: Annotated[
-        bool, typer.Option("--daily", help="Agent mode: a row for every day.")
-    ] = False,
-    ledger: Annotated[
-        bool, typer.Option("--ledger", help="Agent mode: include every transaction.")
-    ] = False,
+    daily: Annotated[bool, typer.Option("--daily", help="A series row for every day.")] = False,
+    ledger: Annotated[bool, typer.Option("--ledger", help="Include every transaction.")] = False,
     verbose: VerboseOpt = False,
     what_if: WhatIf | None = None,
 ) -> None:
@@ -1379,17 +1320,7 @@ def project_cmd(
         _scenario_block(data, model, verbose)
         if not start.known:
             warnings.append("no balance recorded: this projection starts from 0")
-        if c.agent:
-            c.emit(data, warnings)
-        else:
-            run_ = engine.run(
-                model,
-                as_of=start_day,
-                until=end,
-                starting_balance_cents=start.cents,
-                weekly_spend_cents=weekly,
-            )
-            forecast.render_project(out, b, data, run_, start, warnings)
+        c.emit(data, warnings)
 
 
 @app.command("spend", rich_help_panel=ASK)
@@ -1446,10 +1377,7 @@ def spend_cmd(
             weekly_spend_cents=b.weekly_for(model, _money(weekly_spend, "--weekly-spend")),
         )
         _scenario_block(data, model, verbose)
-        if c.agent:
-            c.emit(data, warnings)
-        else:
-            insights.render_spend(out, b, data, warnings)
+        c.emit(data, warnings)
 
 
 @app.command("summary", rich_help_panel=ASK)
@@ -1499,10 +1427,7 @@ def summary_cmd(
         )
         _scenario_block(data, model, verbose)
         data["weekly_spend"] = cents_to_str(b.weekly_for(model))
-        if c.agent:
-            c.emit(data, warnings)
-        else:
-            insights.render_summary(out, b, data, warnings)
+        c.emit(data, warnings)
 
 
 def _compare(
@@ -1557,17 +1482,7 @@ def _compare(
             + [f"[what if] {w}" for w in scen_model.warnings]
             + warnings
         )
-        if c.agent:
-            c.emit(data, warnings)
-        else:
-            weekly = b.weekly_for(b.model(), _money(weekly_spend, "--weekly-spend"))
-            runs = tuple(
-                engine.run(m, as_of=start_day, until=end, weekly_spend_cents=weekly)
-                for m in (base_model, scen_model)
-            )
-            insights.render_compare(
-                out, b, data, warnings, breakeven=breakeven, runs=(runs[0], runs[1])
-            )
+        c.emit(data, warnings)
 
 
 BaselineOpt = Annotated[
@@ -1715,10 +1630,7 @@ def earliest_cmd(
         data["opening"] = agent.start_json(start)
         if not start.known:
             warnings.append("no balance recorded: the search starts from a balance of 0")
-        if c.agent:
-            c.emit(data, warnings)
-        else:
-            insights.render_earliest(out, b, data, warnings)
+        c.emit(data, warnings)
 
 
 @app.command("plan", rich_help_panel=ASK)
@@ -1797,10 +1709,7 @@ def plan_cmd(
             verbose=verbose,
         )
         data["opening"] = agent.start_json(begin)
-        if c.agent:
-            c.emit(data, warnings)
-        else:
-            insights.render_plan(out, b, data, warnings)
+        c.emit(data, warnings)
 
 
 # ── Data ──────────────────────────────────────────────────────────────────────
@@ -1827,13 +1736,8 @@ def init_cmd(
         db.connect(path, create=True).close()
     except Problem as exc:
         _fail(command, exc.code, exc.message, exc.hint)
-    if STATE.agent:
-        _print_json(agent.envelope(command, {"db": str(path), "schema_version": LATEST_VERSION}))
-    else:
-        success(out, f"Created a new budget at [bold]{path}[/].")
-        from bdbd.ui.theme import hint
-
-        out.print(hint("bdbd add Paycheck 2500 every 2 weeks on fri --income", "bdbd balance 1200"))
+    data = {"db": str(path), "schema_version": LATEST_VERSION}
+    _print_json(agent.envelope(command, _selected_or_fail(command, data)))
 
 
 @app.command("config", rich_help_panel=DATA)
@@ -1860,15 +1764,10 @@ def config_cmd(
             if key_ == "weekly_spend":
                 _money(value, "weekly_spend")
             repo.config_set(conn, key_, value)
-        data = {"config": repo.config_all(conn), "keys": repo.CONFIG_KEYS}
-        if c.agent:
-            c.emit(
-                data
-                if not (key_ and value is None and not unset)
-                else {"key": key_, "value": repo.config_get(conn, key_ or "")}
-            )
+        if key_ and value is None and not unset:
+            c.emit({"key": key_, "value": repo.config_get(conn, key_)})
         else:
-            insights.render_config(out, data["config"], repo.CONFIG_KEYS)
+            c.emit({"config": repo.config_all(conn), "keys": repo.CONFIG_KEYS})
 
 
 @app.command("export", rich_help_panel=DATA)
@@ -1879,29 +1778,18 @@ def export_cmd(
             "--output",
             "-o",
             metavar="FILE",
-            help="Write to a file instead of stdout.",
+            help="Write the backup to a file instead of putting it in the envelope.",
             show_default=False,
         ),
     ] = None,
 ) -> None:
     """Back up the whole budget as JSON."""
     with run("export") as c:
-        payload = repo.export_all(c.budget.conn, db.current_version(c.budget.conn))
-        payload["balances"] = [
-            {"as_of": h.as_of.isoformat(), "balance": cents_to_str(h.amount_cents)}
-            for h in balances.history(c.budget.conn)
-        ]
-        payload["exported_at"] = c.today.isoformat()
         if output:
-            Path(output).expanduser().write_text(json.dumps(payload, indent=2) + "\n")
-            if c.agent:
-                c.emit({"written": output, "flows": len(payload["flows"])})
-            else:
-                success(out, f"Wrote {len(payload['flows'])} flows to [bold]{output}[/].")
-        elif c.agent:
-            c.emit(payload)
+            n = backup.write(c.budget.conn, Path(output), budget=c.budget.path, today=c.today)
+            c.emit({"written": output, "flows": n})
         else:
-            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            c.emit(backup.payload(c.budget.conn, c.today))
 
 
 @app.command("import", rich_help_panel=DATA)
@@ -1911,45 +1799,17 @@ def import_cmd(
         bool, typer.Option("--replace", help="Replace everything in the budget with it.")
     ] = False,
 ) -> None:
-    """Restore a backup made with [bold]bdbd export[/]."""
+    """Restore a backup made with [bold]bdbd export[/]: all of it, or nothing if it's damaged."""
     with run("import") as c:
-        p = Path(file).expanduser()
-        if not p.exists():
-            raise Problem(f"there's no file at {file}", "file_not_found")
-        try:
-            payload = json.loads(p.read_text())
-        except json.JSONDecodeError as exc:
-            raise Problem(f"{file} isn't valid JSON: {exc}", "invalid_import") from exc
-        n = repo.import_all(c.budget.conn, payload, replace=replace)
-        if payload.get("balances"):
-            balances.replace_all(
-                c.budget.conn,
-                [
-                    (
-                        date.fromisoformat(x["as_of"]),
-                        parse_amount(x["balance"], allow_negative=True),
-                    )
-                    for x in payload["balances"]
-                ],
-            )
-        if c.agent:
-            c.emit({"imported_flows": n})
-        else:
-            success(out, f"Imported {n} flows.")
+        n = backup.restore(c.budget.conn, backup.read(Path(file)), replace=replace)
+        c.emit({"imported_flows": n})
 
 
 @app.command("tidy", rich_help_panel=DATA)
 def tidy_cmd() -> None:
     """Clear out past months now (bdbd also does this before every command)."""
     with run("tidy", tidy=False) as c:
-        actions = c.budget.tidy()
-        if c.agent:
-            c.emit({"month": c.today.replace(day=1).isoformat(), "actions": actions})
-        elif actions:
-            for a in actions:
-                success(out, a[0].upper() + a[1:])
-        else:
-            success(out, "Nothing from past months to tidy up.")
+        c.emit({"month": c.today.replace(day=1).isoformat(), "actions": c.budget.tidy()})
 
 
 @app.command("sql", rich_help_panel=DATA)
@@ -1975,40 +1835,44 @@ def sql_cmd(
         finally:
             conn.close()
         rows = [dict(zip(cols, r, strict=True)) for r in fetched[:limit]]
-        data = {
-            "columns": cols,
-            "rows": rows,
-            "row_count": len(rows),
-            "truncated": len(fetched) > limit,
-        }
-        if c.agent:
-            c.emit(data)
-        else:
-            insights.render_sql(out, data)
+        c.emit(
+            {
+                "columns": cols,
+                "rows": rows,
+                "row_count": len(rows),
+                "truncated": len(fetched) > limit,
+            }
+        )
 
 
 @app.command("guide", rich_help_panel=DATA)
 def guide_cmd() -> None:
-    """The full reference: every command, the agent-mode output, what-ifs and examples."""
+    """The full reference: every command, its JSON fields, what-ifs and recipes."""
     text = (resources.files("bdbd") / "guide.md").read_text()
-    if STATE.agent:
-        _print_json(agent.envelope("guide", {"guide": text, "format": "markdown"}))
-    else:
-        out.print(Markdown(text, code_theme="ansi_dark"))
+    data = {"guide": text, "format": "markdown"}
+    _print_json(agent.envelope("guide", _selected_or_fail("guide", data)))
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
+def _command_name(argv: list[str]) -> str:
+    """The command an argv names, for usage errors: 'debt set', 'tags rename', 'ls' or 'app'."""
+    words = [a for a in argv if not a.startswith("-")]
+    if not words:
+        return "app"
+    group = {"debt": debt_app, "tags": tags_app}.get(words[0])
+    subs = {c.name for c in group.registered_commands} if group is not None else set()
+    if len(words) > 1 and words[1] in subs:
+        return f"{words[0]} {words[1]}"
+    return words[0]
+
+
 def main(argv: list[str] | None = None) -> None:
     STATE.__init__()  # fresh global flags each run (tests call main repeatedly)
-    argv = _merge_words(_take_globals(list(sys.argv[1:] if argv is None else argv)))
-    if os.environ.get("BDBD_AGENT", "").strip() not in ("", "0", "false", "no"):
-        STATE.agent = True
-    if not STATE.agent:
-        app(args=argv, prog_name="bdbd")
-        return
-    command = next((a for a in argv if not a.startswith("-")), "overview")
+    raw = list(sys.argv[1:] if argv is None else argv)
+    argv = _merge_words(_take_globals(raw))
+    command = _command_name(argv)
     try:
         code = app(args=argv, prog_name="bdbd", standalone_mode=False)
     except typer.Exit as exc:
@@ -2019,5 +1883,13 @@ def main(argv: list[str] | None = None) -> None:
         message = exc.format_message() if hasattr(exc, "format_message") else str(exc)
         _print_json(agent.failure(command, "usage", message))
         code = 2
+    except CashError as exc:  # e.g. a BDBD_TODAY that isn't a date
+        _print_json(agent.failure(command, exc.code, exc.message))
+        code = 1
+    except Exception as exc:  # the last resort: a command always answers with an envelope
+        if command == "app":
+            raise
+        _print_json(agent.failure(command, "internal", f"{type(exc).__name__}: {exc}"))
+        code = 1
     if isinstance(code, int) and code:
         sys.exit(code)

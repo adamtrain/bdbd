@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from bdbd.core import engine
@@ -54,12 +54,14 @@ def breakeven_analysis(a: engine.SimResult, b: engine.SimResult) -> dict:
     end_d, end_x = diffs[-1]
     start_d, start_x = worst
     span_days = (end_d - start_d).days
-    per_month = (
+    per_month = (  # cents a month
         Decimal(end_x - start_x) / Decimal(span_days) * Decimal("30.4375")
         if span_days
         else Decimal(0)
     )
-    out["trend_per_month_since_worst"] = f"{per_month.quantize(Decimal('0.01')):.2f}"
+    out["trend_per_month_since_worst"] = cents_to_str(
+        int(per_month.quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    )
     if per_month > 0:
         months_needed = Decimal(-end_x) / per_month
         est = end_d + timedelta(days=int(months_needed * Decimal("30.4375")))

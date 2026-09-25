@@ -106,6 +106,6 @@ def test_stale_balances_warn(agent, monkeypatch):
     agent("add", "Salary", "2500", "--income", "every 2 weeks from 2026-09-18")
     agent("balance", "1000")
     monkeypatch.setenv("BDBD_TODAY", "2026-10-15")
-    env = agent()
+    env = agent("overview")
     assert any("last recorded" in w for w in env["warnings"])
     assert env["data"]["balance"]["source"] == "carried"

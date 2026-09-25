@@ -1,6 +1,6 @@
-"""Questions bdbd asks of a budget, shared by the human views and agent mode.
+"""Questions bdbd asks of a budget, shared by the app and the JSON commands.
 
-Each function returns plain data; the views draw it and agent mode serializes it, so both
+Each function returns plain data; the app draws it and the commands serialize it, so both
 always report the same numbers.
 """
 
@@ -81,8 +81,9 @@ class Details:
     debt: dict | None = None  # debt_schedule() output (as of today) for debts
 
 
-def details(budget: Budget, flow: Flow, n: int = 6) -> Details:
-    lst = listing(budget, include_inactive=True)
+def details(budget: Budget, flow: Flow, n: int = 6, *, lst: Listing | None = None) -> Details:
+    # `lst`: an up-to-date listing(budget, include_inactive=True) to reuse (the Budget view's)
+    lst = lst or listing(budget, include_inactive=True)
     debt = None
     if flow.debt is not None:
         model = budget.model(include_inactive=True)
@@ -111,14 +112,38 @@ class DebtRow:
     name: str
     balance: int  # owed today
     rate: Decimal
-    payment: int
-    paid_off_on: date | None
-    interest: int  # interest still to pay until payoff
+    payment: int  # each payment
+    paid_off_on: date | None  # None: never, at this payment (within DEBT_HORIZON_DAYS)
+    interest: int | None  # interest still to pay from today until payoff; None if never paid off
+    monthly: int = 0  # the payments as a steady monthly amount; 0 once it's paid off
     tags: tuple[str, ...] = ()
+
+    def done(self, today: date) -> bool:
+        """Paid off already (e.g. a payoff was recorded)."""
+        return self.paid_off_on is not None and self.paid_off_on <= today
+
+
+DEBT_HORIZON_YEARS = DEBT_HORIZON_DAYS // 365
+
+
+def never_paid_warning(rows: list[DebtRow]) -> str | None:
+    """A warning naming the debts that are never paid off at their current payment."""
+    never = [r.name for r in rows if r.paid_off_on is None]
+    if not never:
+        return None
+    from bdbd.words import join
+
+    verb = "is" if len(never) == 1 else "are"
+    return (
+        f"{join(never)} {verb} never paid off at the current payment (not within "
+        f"{DEBT_HORIZON_YEARS} years), so their interest isn't counted in interest_remaining"
+    )
 
 
 def debts(budget: Budget, model: EffectiveModel | None = None) -> list[DebtRow]:
     """Balance today, rate, payment and payoff date for every active debt."""
+    from bdbd.core.recurrence import occurrences_per_year
+
     model = model or budget.model()
     flows = [f for f in model.flows if f.debt is not None]
     if not flows:
@@ -134,15 +159,19 @@ def debts(budget: Budget, model: EffectiveModel | None = None) -> list[DebtRow]:
     for f in flows:
         s = res.debts[f.key]
         assert f.debt is not None
+        payment = f.amount_on(today)
+        done = s.paid_off_on is not None and s.paid_off_on <= today
+        per_year = occurrences_per_year(f.rrule, f.dtstart, f.until, today)
         rows.append(
             DebtRow(
                 key=f.key,
                 name=f.name,
                 balance=_cents(s.balance_at_as_of),
                 rate=f.debt.annual_rate,
-                payment=f.amount_on(today),
+                payment=payment,
                 paid_off_on=s.paid_off_on,
-                interest=_cents(s.interest_in_window),
+                interest=_cents(s.interest_in_window) if s.paid_off_on else None,
+                monthly=0 if done else _cents(Decimal(payment).scaleb(-2) * per_year / 12),
                 tags=tuple(sorted(f.tags)),
             )
         )
@@ -232,8 +261,18 @@ def month_of(text: str | None, today: date) -> date:
         ) from exc
 
 
-def calendar(budget: Budget, month: date, *, given: int | None = None) -> tuple[list[Day], Start]:
-    """Every day of `month` with its scheduled items, and projected balances from today on."""
+def calendar(
+    budget: Budget,
+    month: date,
+    *,
+    given: int | None = None,
+    model: EffectiveModel | None = None,
+) -> tuple[list[Day], Start]:
+    """Every day of `month` with its scheduled items, and projected balances from today on.
+
+    `model` (e.g. with a what-if applied) drives the days from today on; past days always show
+    what the stored budget scheduled.
+    """
     today = budget.today
     first, last = month.replace(day=1), month_end(month)
     days = {first + timedelta(days=i): Day(first + timedelta(days=i)) for i in range(last.day)}
@@ -248,7 +287,7 @@ def calendar(budget: Budget, month: date, *, given: int | None = None) -> tuple[
             days[d].items.append((f.name, sign * f.amount_cents, kind))
     start = budget.start(today, given=given)
     if last >= today:
-        w = window(budget, last, given=given)
+        w = window(budget, last, given=given, model=model)
         start = w.start
         for e in w.items:
             if e.date in days:
@@ -258,3 +297,131 @@ def calendar(budget: Budget, month: date, *, given: int | None = None) -> tuple[
                 if d in days:
                     days[d].balance = bal
     return [days[d] for d in sorted(days)], start
+
+
+# ── The overview ──────────────────────────────────────────────────────────────
+
+HORIZON_DAYS = 90
+MIN_UPCOMING_DAYS = 10
+MAX_UPCOMING_ROWS = 12
+
+
+@dataclass
+class Picture:
+    """Where you stand, computed once: what the app's overview and `bdbd overview` show."""
+
+    start: Start
+    run: engine.SimResult
+    spare: dict | None
+    monthly_in: int
+    monthly_bills: int
+    monthly_everyday: int
+    debts: list[DebtRow]
+    warnings: list[str]
+    horizon_days: int = HORIZON_DAYS
+
+    @property
+    def monthly_net(self) -> int:
+        return self.monthly_in - self.monthly_bills - self.monthly_everyday
+
+    @property
+    def low_point(self) -> tuple[date, int] | None:
+        """The lowest end-of-day balance in the horizon (the earliest, on a tie)."""
+        if not self.start.known or not self.run.daily:
+            return None
+        return min(self.run.daily, key=lambda t: (t[1], t[0]))
+
+
+def stale_warning(start: Start, today: date) -> str | None:
+    from bdbd.words import relative
+
+    rec = start.recorded
+    if start.source == "carried" and rec is not None and (today - rec.as_of).days > 14:
+        return (
+            f"your balance was last recorded {relative(rec.as_of, today)}; "
+            "update it with `bdbd balance AMOUNT` for sharper numbers"
+        )
+    return None
+
+
+def overview(
+    budget: Budget, model: EffectiveModel | None = None, horizon_days: int = HORIZON_DAYS
+) -> Picture:
+    from bdbd.core.queries.project import SpareCalculator
+
+    today = budget.today
+    start = budget.start(today)
+    model = model or budget.model()
+    weekly = budget.weekly_for(model)
+    until = today + timedelta(days=horizon_days)
+    res = engine.run(
+        model,
+        as_of=today,
+        until=until,
+        starting_balance_cents=start.cents,
+        weekly_spend_cents=weekly,
+    )
+    spare = None
+    if start.known and res.daily:
+        spare = SpareCalculator(model, today, until, weekly).compute(today, res.daily[0][1])
+    net, _ = summary(model, as_of=today, by="flow")
+    warnings = list(dict.fromkeys([*model.warnings, *res.warnings]))
+    if w := stale_warning(start, today):
+        warnings.append(w)
+    return Picture(
+        start=start,
+        run=res,
+        spare=spare,
+        monthly_in=_cents(Decimal(net["net"]["income_monthly"])),
+        monthly_bills=_cents(Decimal(net["net"]["expense_monthly"])),
+        monthly_everyday=everyday_monthly(weekly),
+        debts=debts(budget, model),
+        warnings=warnings,
+        horizon_days=horizon_days,
+    )
+
+
+def coming_up(p: Picture, today: date) -> list[engine.LedgerEntry]:
+    """Scheduled items until the next income (at least ten days ahead, at most a dozen)."""
+    entries = [e for e in p.run.ledger if e.kind != "lifestyle"]
+    income = [e for e in entries if e.delta_cents > 0 and e.date > today]  # not today's own
+    stop = income[0].date if income else today + timedelta(days=MIN_UPCOMING_DAYS)
+    stop = max(stop, today + timedelta(days=MIN_UPCOMING_DAYS))
+    return [e for e in entries if e.date <= stop][:MAX_UPCOMING_ROWS]
+
+
+# ── Tags ──────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class TagRow:
+    name: str
+    flows: int
+    flow_names: list[str]
+    expense_monthly: int
+    income_monthly: int
+
+
+def tag_rows(budget: Budget, model: EffectiveModel | None = None) -> list[TagRow]:
+    """Every tag with the flows carrying it and its steady-state monthly money."""
+    from bdbd.core import repo
+
+    names: dict[str, list[str]] = {}
+    for f in budget.flows():
+        for t in f.tags:
+            names.setdefault(t, []).append(f.name)
+    data, _ = summary(model or budget.model(), as_of=budget.today, by="tag")
+    monthly = {r["tag"]: r for r in data["by_tag"]}
+    rows = []
+    for t in repo.list_tags(budget.conn):
+        m = monthly.get(t.name)
+        rows.append(
+            TagRow(
+                name=t.name,
+                flows=t.flow_count,
+                flow_names=names.get(t.name, []),
+                expense_monthly=_cents(Decimal(m["expense_monthly"])) if m else 0,
+                income_monthly=_cents(Decimal(m["income_monthly"])) if m else 0,
+            )
+        )
+    return rows

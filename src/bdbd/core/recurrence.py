@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -145,9 +146,15 @@ def occurrences_per_year(
         return Decimal(0)
     if until is not None and until < as_of:
         return Decimal(0)
-    start = max(as_of, dtstart)
+    return Decimal(_steady_count(rule_text, dtstart, max(as_of, dtstart))) / Decimal(
+        STEADY_WINDOW_YEARS
+    )
+
+
+@functools.lru_cache(maxsize=4096)
+def _steady_count(rule_text: str, dtstart: date, start: date) -> int:
+    """Occurrences in the 84 years from `start` (cached: it's pure and the costly part)."""
     window_end = date(start.year + STEADY_WINDOW_YEARS, start.month, min(start.day, 28))
     # steady mode ignores a future `until` on purpose: it asks "what does this cost per year
     # while it runs", so we pass until=None here. Window is half-open: [start, window_end).
-    n = len(occurrences(rule_text, dtstart, None, start, window_end - timedelta(days=1)))
-    return Decimal(n) / Decimal(STEADY_WINDOW_YEARS)
+    return len(occurrences(rule_text, dtstart, None, start, window_end - timedelta(days=1)))

@@ -31,6 +31,8 @@ def normalize_tag(name: str) -> str:
     t = name.strip().lower()
     if not t:
         raise CashError("tag name must not be empty", "invalid_tag")
+    if "," in t:
+        raise CashError(f"a tag can't contain a comma: {name.strip()!r}", "invalid_tag")
     return t
 
 
@@ -180,14 +182,14 @@ def get_flow(conn: sqlite3.Connection, flow_id: int) -> Flow:
 
 
 def resolve_flow(conn: sqlite3.Connection, ident: str | int) -> Flow:
-    """Accept a numeric id or a (case-insensitive) unique name."""
+    """Accept a (case-insensitive) unique name, or a numeric id."""
     s = str(ident).strip()
+    r = conn.execute("SELECT * FROM flow WHERE name = ?", (s,)).fetchone()
+    if r is not None:  # a name first, for older budgets that have all-digit names
+        return _row_to_flow(conn, r)
     if s.isdigit():
         return get_flow(conn, int(s))
-    r = conn.execute("SELECT * FROM flow WHERE name = ?", (s,)).fetchone()
-    if r is None:
-        raise CashError(f"no flow named {s!r}", "unknown_flow")
-    return _row_to_flow(conn, r)
+    raise CashError(f"no flow named {s!r}", "unknown_flow")
 
 
 def list_flows(
@@ -215,6 +217,18 @@ def list_flows(
     return [_row_to_flow(conn, r) for r in conn.execute(sql, args).fetchall()]
 
 
+def check_name(name: str) -> str:
+    """A flow's name, trimmed; numbers alone are refused because they read as ids."""
+    n = str(name).strip()
+    if not n:
+        raise CashError("flow name must not be empty", "invalid_name")
+    if n.isdigit():
+        raise CashError(
+            f"a flow name needs a letter in it ({n!r} would read as an id)", "invalid_name"
+        )
+    return n
+
+
 def add_flow(
     conn: sqlite3.Connection,
     *,
@@ -230,9 +244,7 @@ def add_flow(
     weekend: Weekend = Weekend.NONE,
     flow_id: int | None = None,
 ) -> Flow:
-    name = name.strip()
-    if not name:
-        raise CashError("flow name must not be empty", "invalid_name")
+    name = check_name(name)
     if rrule is not None:
         rrule = validate_rrule(rrule)
     if until is not None and until < dtstart:
@@ -283,9 +295,7 @@ def update_flow(
     sets: list[str] = []
     args: list = []
     if name is not _UNSET:
-        n = str(name).strip()
-        if not n:
-            raise CashError("flow name must not be empty", "invalid_name")
+        n = check_name(name)
         dup = conn.execute(
             "SELECT id FROM flow WHERE name = ? AND id <> ?", (n, flow_id)
         ).fetchone()
@@ -576,26 +586,46 @@ def export_all(conn: sqlite3.Connection, schema_version: int) -> dict:
     }
 
 
-def import_all(conn: sqlite3.Connection, payload: dict, *, replace: bool) -> int:
+def _problem(exc: Exception) -> str:
+    """What was wrong with one item of a backup, in a few words."""
+    if isinstance(exc, KeyError):
+        return f"it has no {exc.args[0]!r}"
+    if isinstance(exc, CashError):
+        return exc.message
+    return str(exc) or type(exc).__name__
+
+
+def _items(payload: dict, key: str) -> list[dict]:
+    value = payload.get(key) or []
+    if not isinstance(value, list) or not all(isinstance(x, dict) for x in value):
+        raise CashError(f"its {key!r} should be a list of objects", "invalid_import")
+    return value
+
+
+def import_rows(conn: sqlite3.Connection, payload: dict, *, keep_ids: bool) -> int:
+    """Replace every flow, debt, tag and setting with a backup's; returns the number of flows.
+
+    Runs no transaction of its own (bdbd.backup wraps it in one, with the balances). A bad
+    item raises CashError('invalid_import') naming it, e.g. "flow 3 (Rent): it has no 'kind'".
+    """
     from bdbd.core.money import parse_amount
 
     if payload.get(EXPORT_KEY) != EXPORT_FORMAT:
         raise CashError(
             f"not a bdbd export file (missing {EXPORT_KEY}: {EXPORT_FORMAT})", "invalid_import"
         )
-    existing = conn.execute("SELECT count(*) FROM flow").fetchone()[0]
-    if existing and not replace:
-        raise CashError(
-            f"database already has {existing} flows; pass --replace to overwrite", "db_not_empty"
-        )
-    conn.execute("BEGIN")
-    try:
-        conn.execute("DELETE FROM flow")
-        conn.execute("DELETE FROM tag")
-        conn.execute("DELETE FROM config")
-        for k, v in (payload.get("config") or {}).items():
-            config_set(conn, k, str(v))
-        for item in payload.get("flows", []):
+    config = payload.get("config") or {}
+    if not isinstance(config, dict):
+        raise CashError("its 'config' should be an object", "invalid_import")
+    flows = _items(payload, "flows")
+    conn.execute("DELETE FROM flow")
+    conn.execute("DELETE FROM tag")
+    conn.execute("DELETE FROM config")
+    for k, v in config.items():
+        config_set(conn, k, str(v))
+    for i, item in enumerate(flows, 1):
+        label = f" ({item['name']})" if isinstance(item.get("name"), str) else ""
+        try:
             f = add_flow(
                 conn,
                 name=item["name"],
@@ -608,7 +638,7 @@ def import_all(conn: sqlite3.Connection, payload: dict, *, replace: bool) -> int
                 notes=item.get("notes"),
                 active=bool(item.get("active", True)),
                 weekend=Weekend(item.get("weekend", "none")),
-                flow_id=item.get("id") if replace else None,
+                flow_id=item.get("id") if keep_ids else None,
             )
             d = item.get("debt")
             if d:
@@ -643,10 +673,8 @@ def import_all(conn: sqlite3.Connection, payload: dict, *, replace: bool) -> int
                             else None
                         ),
                         notes=e.get("notes"),
-                        event_id=e.get("id") if replace else None,
+                        event_id=e.get("id") if keep_ids else None,
                     )
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-    return len(payload.get("flows", []))
+        except (CashError, KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise CashError(f"flow {i}{label}: {_problem(exc)}", "invalid_import") from exc
+    return len(flows)

@@ -1,0 +1,188 @@
+/* bdbd's global styles. Views keep their own DEFAULT_CSS; colors come from the "bdbd" theme
+   ($primary is the accent, $secondary purple, $success/$warning/$error green/amber/red,
+   $border the quiet panel border, $text-muted the faint grey). */
+
+MainScreen, WelcomeScreen, ProblemScreen {
+    background: $background;
+}
+
+/* One-cell scrollbars everywhere (lists set theirs in RowList). */
+ScrollableContainer {
+    scrollbar-size-vertical: 1;
+}
+
+/* ── The main screen ───────────────────────────────────────────────────────── */
+
+MainScreen {
+    layout: vertical;
+}
+
+#topbar {
+    height: 1;
+    padding: 0 1;
+}
+
+#brand {
+    margin-right: 1;
+}
+
+#tabs {
+    width: 1fr;
+    height: 1;
+}
+
+.view-tab {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+}
+
+.view-tab:hover {
+    background: $boost;
+}
+
+#meta {
+    width: auto;
+    height: 1;
+}
+
+#tabrule {
+    height: 1;
+}
+
+#banner {
+    height: 1;
+    padding: 0 1;
+    background: $primary 16%;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#views {
+    height: 1fr;
+    padding: 0 1;
+}
+
+#too-small {
+    display: none;
+    width: 1fr;
+    height: 1fr;
+    content-align: center middle;
+    color: $text-muted;
+}
+
+MainScreen.-too-small > * {
+    display: none;
+}
+
+MainScreen.-too-small > #too-small {
+    display: block;
+}
+
+MainScreen.-narrow #meta {
+    display: none;
+}
+
+Footer {
+    background: $background;
+    padding: 0 1;
+}
+
+/* ── Opening ───────────────────────────────────────────────────────────────── */
+
+WelcomeScreen, ProblemScreen {
+    align: center middle;
+}
+
+#welcome-box, #problem-box {
+    width: 64;
+    height: auto;
+    border: round $primary;
+    background: $surface;
+    padding: 1 3;
+}
+
+#problem-box {
+    border: round $warning;
+}
+
+#welcome-text {
+    height: auto;
+}
+
+#welcome-buttons {
+    height: 1;
+    margin-top: 2;
+    align-horizontal: right;
+}
+
+/* ── Toasts ────────────────────────────────────────────────────────────────── */
+
+ToastRack {
+    margin-bottom: 1;
+}
+
+Toast {
+    width: auto;
+    min-width: 24;
+    max-width: 72%;
+    padding: 0 2;
+    margin-top: 1;
+    background: $panel;
+    color: $foreground;
+}
+
+Toast.-information {
+    border-left: outer $primary;
+}
+
+Toast.-warning {
+    border-left: outer $warning;
+}
+
+Toast.-error {
+    border-left: outer $error;
+}
+
+/* ── The command palette ───────────────────────────────────────────────────── */
+/* One rounded box in the middle, like the dialogs: the input on top, the matches under it. */
+
+CommandPalette > Vertical {
+    width: 76;
+    max-width: 100%;
+}
+
+CommandPalette #--input {
+    border: round $primary;
+    background: $surface;
+    padding: 0 1;
+}
+
+CommandPalette #--input.--list-visible {
+    border-bottom: none;
+}
+
+CommandPalette SearchIcon {
+    display: none;
+}
+
+CommandPalette CommandList {
+    border: round $primary;
+    border-top: none;
+    background: $surface;
+}
+
+CommandPalette CommandList.--populating {
+    border-bottom: none;
+}
+
+CommandPalette LoadingIndicator {
+    border: round $primary;
+    border-top: none;
+    background: $surface;
+}
+
+CommandPalette > .command-palette--help-text {
+    color: $text-muted;
+    text-style: not bold;
+}

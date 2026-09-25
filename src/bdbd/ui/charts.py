@@ -19,7 +19,13 @@ class Tick:
 
 
 def _x_ticks(days: Sequence[date], cells: int) -> list[Tick]:
-    """Day labels for short spans, month names for longer ones, years for very long ones."""
+    """Day labels for short spans, month names for longer ones, years for very long ones.
+
+    Labels are placed by importance (the start and every new year first, then quarters, then
+    the other months), at least two cells apart, so a two-year chart keeps its years and its
+    months land at a steady rhythm. Years alone need only one cell between them: they're
+    digits, and rounding would otherwise drop one now and then from an even row.
+    """
     n = len(days)
     if n == 0:
         return []
@@ -28,30 +34,47 @@ def _x_ticks(days: Sequence[date], cells: int) -> list[Tick]:
         return min(cells - 1, int(i * cells / n))
 
     span_days = (days[-1] - days[0]).days
-    ticks: list[Tick] = []
+    ranked: list[tuple[int, Tick]] = []  # (importance, tick): lower goes first
     for i, d in enumerate(days):
         prev = days[i - 1] if i else d
         first = i == 0
         if span_days <= 45:
             if first or d.isocalendar()[:2] != prev.isocalendar()[:2]:
-                ticks.append(Tick(col(i), f"{MONTH_SHORT[d.month]} {d.day}"))
+                ranked.append((0 if first else 1, Tick(col(i), f"{MONTH_SHORT[d.month]} {d.day}")))
         elif span_days <= 800:
             if first or (d.year, d.month) != (prev.year, prev.month):
                 label = MONTH_SHORT[d.month]
-                if span_days > 300 and (first or d.month == 1):
+                year = span_days > 300 and (first or d.month == 1)
+                if year:
                     label += f" {d.year}"
-                ticks.append(Tick(col(i), label))
+                rank = 0 if year or first else 1 if d.month % 3 == 1 else 2 if d.month % 2 else 3
+                ranked.append((rank, Tick(col(i), label)))
         elif first or d.year != prev.year:
-            ticks.append(Tick(col(i), str(d.year)))
-    if len(ticks) > 1 and ticks[1].column <= ticks[0].column + len(ticks[0].label):
-        ticks = ticks[1:]  # the first boundary says more than the start date
+            ranked.append((0 if first else 1 if d.year % 5 == 0 else 2, Tick(col(i), str(d.year))))
+    if len(ranked) > 1:
+        start, nxt = ranked[0][1], ranked[1][1]
+        if nxt.column < start.column + len(start.label) + 2:
+            # the first boundary says more than the start date; it keeps the start's year
+            year = start.label.rsplit(" ", 1)[-1]
+            label = nxt.label
+            if span_days > 300 and year.isdigit() and not label.endswith(year):
+                label = label if label.isdigit() else f"{label} {year}"
+            ranked = [(0, Tick(nxt.column, label)), *ranked[2:]]
+    gap = 1 if span_days > 800 else 2
+    if 300 < span_days <= 800 and len(ranked) > 1:
+        # 'Oct 2026' would crowd out a January close behind it: 'Oct … Jan 2027' says both
+        first = ranked[0][1]
+        jan = next((t for _, t in ranked[1:] if t.label.startswith("Jan ")), None)
+        if jan is not None and jan.column < first.column + len(first.label) + gap:
+            ranked[0] = (0, Tick(first.column, first.label.split(" ")[0]))
     placed: list[Tick] = []
-    end = -1
-    for t in ticks:
-        if t.column > end and t.column + len(t.label) <= cells:
+    for _, t in sorted(ranked, key=lambda rt: (rt[0], rt[1].column)):
+        end = t.column + len(t.label)
+        if end > cells:
+            continue
+        if all(end + gap <= p.column or p.column + len(p.label) + gap <= t.column for p in placed):
             placed.append(t)
-            end = t.column + len(t.label)
-    return placed
+    return sorted(placed, key=lambda t: t.column)
 
 
 def strip(
@@ -140,11 +163,15 @@ def balance_chart(
     *,
     color: str = ACCENT,
     floor: int | None = None,
+    marker: date | None = None,
+    below: str = RED,
 ) -> list[Text]:
     """End-of-day balances as solid columns rising from zero (or falling below it).
 
     Each column shows the lowest balance of the days it covers, so every dip before a payday
-    stays visible. Columns under zero (or under `floor`) are red.
+    stays visible. Columns under zero (or under `floor`) are drawn in `below` (red; the what-if
+    difference uses amber for "behind"). A `marker` date lights up the column covering it at
+    full strength and labels it on the axis ('▲ Dec 12').
     """
     if not series:
         return []
@@ -167,6 +194,9 @@ def balance_chart(
     cells = max(8, width - label_w - 2)
     n = len(values)
     threshold = floor if floor is not None else 0
+    days = [d for d, _ in series]
+    marked = days.index(marker) if marker is not None and marker in days else None
+    lit: list[int] = []  # the columns covering the marker day
     columns: list[tuple[int, int, int, str]] = []  # from, to (eighths), cap row, color
     for c in range(cells):
         a = int(c * n / cells)
@@ -175,7 +205,9 @@ def balance_chart(
         top = level(v)
         start, end = (zero, top) if top >= zero else (top, zero)
         cap = (end - 1) // 8 if top >= zero else start // 8
-        columns.append((start, end, cap, RED if v < threshold else color))
+        columns.append((start, end, cap, below if v < threshold else color))
+        if marked is not None and a <= marked < b:
+            lit.append(c)
     lines: list[Text] = []
     for row in range(height - 1, -1, -1):
         base = row * 8
@@ -183,9 +215,9 @@ def balance_chart(
         label = labels.get(row, "")
         line.append(label.rjust(label_w), style=FAINT)
         line.append(" ┤" if label else "  ", style=FAINT)
-        for start, end, cap, c_color in columns:
+        for c, (start, end, cap, c_color) in enumerate(columns):
             a, b = max(start, base), min(end, base + 8)
-            style = c_color if row == cap else muted(c_color)
+            style = c_color if row == cap or c in lit else muted(c_color)
             if b - a <= 0:
                 line.append(" ")
             elif b - a >= 8:
@@ -195,10 +227,38 @@ def balance_chart(
             else:  # sits on the cell's floor (or inside it: shown from the floor up)
                 line.append(_BLOCKS[b - base], style=style)
         lines.append(line)
-    days = [d for d, _ in series]
+    ticks = _x_ticks(days, cells)
+    if lit and marker is not None:
+        lines.append(_marked_axis(ticks, cells, label_w, lit, marker, columns[lit[0]][3]))
+        return lines
     tick_line = [" "] * cells
-    for t in _x_ticks(days, cells):
+    for t in ticks:
         for k, ch in enumerate(t.label):
             tick_line[t.column + k] = ch
     lines.append(Text(" " * (label_w + 2) + "".join(tick_line).rstrip(), style=FAINT))
     return lines
+
+
+def _marked_axis(
+    ticks: list[Tick], cells: int, label_w: int, lit: list[int], marker: date, color: str
+) -> Text:
+    """The axis row with '▲ Dec 12' under the marked column; ticks it would overlap give way."""
+    col = lit[len(lit) // 2]
+    text = f"{MONTH_SHORT[marker.month]} {marker.day}"
+    label = f"▲ {text}"
+    start = col if col + len(label) <= cells else max(0, col - len(label) + 1)
+    if start != col:
+        label = f"{text} ▲"
+    end = start + len(label)
+    cells_row: list[tuple[str, str]] = [(" ", FAINT)] * cells
+    for t in ticks:
+        if t.column + len(t.label) < start - 1 or t.column > end:
+            for k, ch in enumerate(t.label):
+                cells_row[t.column + k] = (ch, FAINT)
+    for k, ch in enumerate(label[: cells - start]):
+        cells_row[start + k] = (ch, f"bold {color}")
+    line = Text(" " * (label_w + 2), style=FAINT)
+    for ch, style in cells_row:
+        line.append(ch, style=style)
+    line.rstrip()
+    return line

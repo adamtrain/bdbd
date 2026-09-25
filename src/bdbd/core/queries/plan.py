@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from bdbd.core import engine
 from bdbd.core.dates import add_months, months_between
@@ -28,6 +28,7 @@ from bdbd.core.models import (
 )
 from bdbd.core.money import cents_to_str, dec_to_str, rate_to_str
 from bdbd.core.queries.project import project
+from bdbd.core.recurrence import occurrences_per_year
 
 STRATEGIES = ("avalanche", "snowball", "order")
 
@@ -259,7 +260,17 @@ def plan(
         base_free = None
     plan_interest = interest(result, targets_keys)
     base_interest = interest(base, targets_keys)
-    scheduled_total = sum(f.amount_on(start) for f in targets)
+    # the payments as a steady monthly amount (a fortnightly payment is ~2.17 of them)
+    scheduled_total = sum(
+        int(
+            (
+                Decimal(f.amount_on(start))
+                * occurrences_per_year(f.rrule, f.dtstart, f.until, start)
+                / 12
+            ).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+        )
+        for f in targets
+    )
     data: dict = {
         "as_of": as_of.isoformat(),
         "start": start.isoformat(),

@@ -98,3 +98,17 @@ def readonly_connect(path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only = 1")
     return conn
+
+
+def problem(exc: sqlite3.Error, path: Path) -> tuple[str, str, str | None]:
+    """An sqlite failure as (code, message, hint) a person or an agent can act on."""
+    text = str(exc)
+    if "locked" in text or "busy" in text:
+        return (
+            "db_busy",
+            "the budget file is busy in another program",
+            "Try again in a moment.",
+        )
+    if "readonly" in text or "read-only" in text:
+        return ("db_readonly", f"{path} is read-only, so changes can't be saved", None)
+    return ("db_unreadable", f"{path} isn't a readable budget ({text})", None)
